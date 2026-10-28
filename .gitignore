@@ -25,6 +25,11 @@ build/
 .vite/
 *.tsbuildinfo
 
+# Walking skeleton: the hand-written SPA placeholder commits; all other build output stays ignored.
+!frontend/dist/
+frontend/dist/*
+!frontend/dist/index.html
+
 # Editors / OS
 .vscode/
 .idea/

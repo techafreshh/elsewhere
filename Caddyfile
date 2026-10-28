@@ -1,0 +1,5 @@
+# ELSEWHERE Caddy reverse-proxy reference.
+# Caddy runs outside Compose on the VPS and forwards public traffic to the API.
+:80 {
+	reverse_proxy localhost:8000
+}
