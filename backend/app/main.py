@@ -19,6 +19,11 @@ except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
     from app.catalog import get_catalog, get_seed_pairs
 
 try:
+    from backend.app.agent import run_transplant
+except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
+    from app.agent import run_transplant
+
+try:
     from backend.app.qloo import qloo_insights_brand, qloo_insights_place
 except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
     from app.qloo import qloo_insights_brand, qloo_insights_place
@@ -87,62 +92,8 @@ def _qloo_mode() -> str:
 
 
 def _build_transplant_payload(seed_ids: list[str], city: str, refinements: list[str]) -> dict:
-    """Deterministic mock payload in the PRD section 10 envelope. Never raises."""
-    city_display = city.strip() or "London"
-    try:
-        entities = qloo_insights_place(city_display).get("entities", [])
-    except (ValueError, OSError):
-        entities = []
-    if not isinstance(entities, list) or not entities:
-        entities = [{"name": city_display, "entity_id": "urn:entity:place:mock-fallback",
-                     "explainability": 1.0, "address": city_display, "tags": []}]
-    picked = [e for e in entities if isinstance(e, dict) and e.get("name")][:5] or entities[:5]
-    scores = [float(e.get("explainability", 1.0) or 1.0) for e in picked]
-    mid = float(median(scores)) or 1.0
-    center = list(_FALLBACK_CENTERS.get(city_display.strip().lower(), [51.5074, -0.1278]))
-    seed_hint = _short_label(seed_ids[0]) if seed_ids else city_display
-    cards: list[dict] = []
-    for index, entity in enumerate(picked):
-        name = str(entity.get("name", ""))
-        tags = entity.get("tags") if isinstance(entity.get("tags"), list) else []
-        tag_hint = str(tags[0]).replace("-", " ") if tags else (refinements[0] if refinements else "your crowd")
-        latlng = [round(center[0] + 0.01 * index, 4), round(center[1] + 0.012 * index, 4)]
-        score = float(entity.get("explainability", 1.0) or 1.0)
-        cards.append({
-            "name": name,
-            "address": str(entity.get("address", "")),
-            "latlng": latlng,
-            "why_you": f"Because {seed_hint} nights and {tag_hint} both live here",
-            "affinity_multiplier": round(score / mid, 2),
-            "taste_path": [seed_hint, tag_hint, name],
-            "entity_id": str(entity.get("entity_id", "")),
-        })
-    try:
-        brand_entities = qloo_insights_brand(city_display).get("entities", [])
-        brands = [str(e.get("name", "")) for e in brand_entities
-                  if isinstance(e, dict) and e.get("name")][:5]
-    except (ValueError, OSError):
-        brands = []
-    return {
-        "tourist": {
-            "summary": f"Tourist take on {city_display}: the usual top-10 list, no reasons attached.",
-            "items": [
-                f"Top 10 restaurants in {city_display}",
-                f"Must-see sights in {city_display}",
-                f"Best nightlife in {city_display}",
-            ],
-        },
-        "transplant": {
-            "summary": f"Grounded transplant of {len(seed_ids)} tastes to {city_display}.",
-            "cards": cards,
-            "brands": brands,
-            "map_center": center,
-            "map_pins": [{"latlng": card["latlng"], "card_index": i} for i, card in enumerate(cards)],
-        },
-        "confirmations": [],
-        "meta": {"model": MODEL_SLUG, "cache_hit": False,
-                 "broadened": False, "qloo_mode": _qloo_mode()},
-    }
+    """Delegate to the agent loop (PRD section 10 envelope). Never raises."""
+    return run_transplant(seed_ids, city, refinements)
 
 
 @app.post("/api/transplant")
