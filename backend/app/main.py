@@ -6,7 +6,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.app.catalog import get_catalog, get_seed_pairs
+try:
+    from backend.app.catalog import get_catalog, get_seed_pairs
+except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
+    from app.catalog import get_catalog, get_seed_pairs
 
 app = FastAPI(title="ELSEWHERE")
 
