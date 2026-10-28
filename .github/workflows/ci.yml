@@ -15,7 +15,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.txt
       - name: Run backend tests
-        run: pytest backend/tests -q
+        run: python -m pytest backend/tests -q
       - name: Check compose config and Caddyfile
         run: |
           docker compose config
