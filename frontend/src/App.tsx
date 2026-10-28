@@ -3,6 +3,7 @@ import type { KeyboardEvent } from "react";
 import { motion } from "motion/react";
 import AffinityBadge from "./AffinityBadge.tsx";
 import TransplantMap from "./TransplantMap.tsx";
+import { streamAgui, type AguiActivity, type AguiEvent } from "./agui.ts";
 import {
   CATEGORIES,
   FALLBACK_CHIPS,
@@ -277,6 +278,41 @@ function templateCopy(city: string): RevealPayload {
   };
 }
 
+/** Normalize a transplant `cards` candidate into renderable cards (max 5).
+ *  Shared by the strict final payload and the lenient progressive payload so
+ *  partial deltas render exactly what the stream carried. Never throws. */
+function toCardList(rawCards: unknown): TransplantCard[] {
+  try {
+    if (!Array.isArray(rawCards)) return [];
+    const cards: TransplantCard[] = [];
+    for (const entry of rawCards) {
+      if (!entry || typeof entry !== "object") continue;
+      const rec = entry as Record<string, unknown>;
+      const name = typeof rec.name === "string" ? rec.name : "";
+      const why =
+        typeof rec.why_you === "string"
+          ? rec.why_you
+          : typeof rec.whyYou === "string"
+            ? rec.whyYou
+            : "";
+      if (!name || !why) continue;
+      const latlng = toLatLng(rec.latlng);
+      cards.push({
+        ...(rec as Partial<TransplantCard>),
+        name,
+        why_you: why,
+        affinity_multiplier: toAffinity(rec.affinity_multiplier),
+        taste_path: toTastePath(rec.taste_path),
+        ...(latlng ? { latlng } : {}),
+      });
+      if (cards.length >= 5) break;
+    }
+    return cards;
+  } catch {
+    return [];
+  }
+}
+
 /** Normalize any transplant-shaped JSON into the pane payload. Null on any
  *  mismatch — the caller renders template copy instead. Never throws. */
 function toRevealPayload(data: unknown, city: string): RevealPayload | null {
@@ -301,30 +337,7 @@ function toRevealPayload(data: unknown, city: string): RevealPayload | null {
       0,
       Math.max(3, picked.length),
     );
-    const rawCards = Array.isArray(transplant.cards) ? transplant.cards : [];
-    const cards: TransplantCard[] = [];
-    for (const entry of rawCards) {
-      if (!entry || typeof entry !== "object") continue;
-      const rec = entry as Record<string, unknown>;
-      const name = typeof rec.name === "string" ? rec.name : "";
-      const why =
-        typeof rec.why_you === "string"
-          ? rec.why_you
-          : typeof rec.whyYou === "string"
-            ? rec.whyYou
-            : "";
-      if (!name || !why) continue;
-      const latlng = toLatLng(rec.latlng);
-      cards.push({
-        ...(rec as Partial<TransplantCard>),
-        name,
-        why_you: why,
-        affinity_multiplier: toAffinity(rec.affinity_multiplier),
-        taste_path: toTastePath(rec.taste_path),
-        ...(latlng ? { latlng } : {}),
-      });
-      if (cards.length >= 5) break;
-    }
+    const cards = toCardList(transplant.cards);
     if (!touristSummary || !transplantSummary || cards.length < 5) return null;
     const trimmed = cards.slice(0, 5);
     const rawBrands = Array.isArray(transplant.brands) ? transplant.brands : [];
@@ -353,40 +366,66 @@ function toRevealPayload(data: unknown, city: string): RevealPayload | null {
   }
 }
 
-/** Best-effort parse of the POST /agui SSE stream into a pane payload.
- *  Null on any failure (non-SSE body, RUN_ERROR, short snapshot) so the
- *  caller falls through to the JSON path. Never throws. */
-function tryParseAguiStream(text: string, city: string): RevealPayload | null {
+/** Accumulated STATE_DELTA/STATE_SNAPSHOT fragments for one /agui run.
+ *  Progressive rendering merges each delta here, so the panes show exactly
+ *  what the stream has carried so far. Never throws by construction. */
+interface StreamAcc {
+  cards: unknown;
+  brands: unknown;
+  center: unknown;
+  pins: unknown;
+  touristSummary: string;
+  transplantSummary: string;
+  root: Record<string, unknown>;
+}
+
+/** Lenient progressive payload: renders 1+ streamed cards with whatever
+ *  summaries, brands, and map fragments have arrived, template copy filling
+ *  the gaps. Null only when no renderable card has arrived yet. Never throws. */
+function toProgressivePayload(acc: StreamAcc, city: string): RevealPayload | null {
   try {
-    let snapshot: Record<string, unknown> | null = null;
-    let deltaTourist = "";
-    let deltaTransplant = "";
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const jsonText = trimmed.slice("data:".length).trim();
-      if (!jsonText) continue;
-      let event: Record<string, unknown>;
-      try {
-        event = JSON.parse(jsonText) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-      if (!event || typeof event.type !== "string") continue;
-      if (event.type === "RUN_ERROR") return null;
-      if (event.type === "STATE_SNAPSHOT" && event.snapshot && typeof event.snapshot === "object") {
-        snapshot = event.snapshot as Record<string, unknown>;
-      } else if (event.type === "STATE_DELTA" && event.delta && typeof event.delta === "object") {
-        const delta = event.delta as Record<string, unknown>;
-        if (typeof delta.tourist_summary === "string" && delta.tourist_summary) {
-          deltaTourist = delta.tourist_summary;
-        }
-        if (typeof delta.transplant_summary === "string" && delta.transplant_summary) {
-          deltaTransplant = delta.transplant_summary;
-        }
-      }
-    }
-    if (!snapshot) return null;
+    const cards = toCardList(acc.cards);
+    if (cards.length === 0) return null;
+    const place = city.trim() || DEFAULT_CITY;
+    const base = templateCopy(place);
+    const rawBrands = Array.isArray(acc.brands) ? acc.brands : [];
+    const brands = rawBrands.filter(
+      (entry): entry is string => typeof entry === "string" && entry.length > 0,
+    );
+    const mapData = toMapData(
+      { map_center: acc.center, map_pins: acc.pins },
+      cards,
+    );
+    return {
+      tourist: {
+        summary: acc.touristSummary || base.tourist.summary,
+        items: defaultTouristItems(place),
+      },
+      transplant: {
+        summary: acc.transplantSummary || base.transplant.summary,
+        cards,
+        brands: brands.length > 0 ? brands : base.transplant.brands,
+        map_center: mapData.center,
+        map_pins: mapData.pins,
+      },
+      whyQloo: toWhyQloo(acc.root, cards, place),
+      model: toHonestyModel(acc.root),
+      broadened: toBroadened(acc.root),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Normalize a STATE_SNAPSHOT into the pane payload. Null on any mismatch
+ *  so the caller falls through to the JSON path. Never throws. */
+function toSnapshotPayload(
+  snapshot: Record<string, unknown>,
+  deltaTourist: string,
+  deltaTransplant: string,
+  city: string,
+): RevealPayload | null {
+  try {
     const rawTourist =
       typeof snapshot.tourist_summary === "string" && snapshot.tourist_summary
         ? snapshot.tourist_summary
@@ -453,6 +492,8 @@ export default function App() {
   const [reveal, setReveal] = useState<RevealPayload | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [activities, setActivities] = useState<AguiActivity[]>([]);
+  const [streaming, setStreaming] = useState(false);
   const [highlighted, setHighlighted] = useState(-1);
   const [statusPath, setStatusPath] = useState<StatusPath>("idle");
   const [whyOpen, setWhyOpen] = useState(false);
@@ -513,20 +554,196 @@ export default function App() {
     );
   };
 
-  // Submit pipeline: optimistic POST /agui SSE attempt (~3s abort), then the
-  // POST /api/transplant JSON fallback, then the inlined template-copy floor.
-  // Never rejects and never surfaces a 500 — every path ends in panes.
+  // Submit pipeline: Tier-1 state-driven POST /agui SSE stream (3s optimistic
+  // abort while idle, 25s once frames flow), then the POST /api/transplant
+  // JSON fallback, then the inlined template-copy floor. TOOL_CALL_START/END
+  // rows and STATE_DELTA progressive reveals dispatch as frames arrive; a
+  // forced 500, RUN_ERROR, abort, or null final payload silently abandons the
+  // stream for the JSON ladder. Never rejects and never surfaces a 500 —
+  // every path ends in panes.
   const onSubmit = async () => {
     if (submitting) return;
     setSubmitting(true);
+    // Protocol-visible waiting state: empty panes plus a live activity feed
+    // before the first byte arrives, so TOOL_CALL_START rows land within 1s.
+    const acc: StreamAcc = {
+      cards: undefined,
+      brands: undefined,
+      center: undefined,
+      pins: undefined,
+      touristSummary: "",
+      transplantSummary: "",
+      root: {},
+    };
+    setActivities([]);
+    setStreaming(true);
+    setReveal(null);
+    setRevealed(true);
     const seeds = selected.length > 0 ? selected : HERO_LONDON_SEEDS;
     const destCity = city.trim() || DEFAULT_CITY;
     const body = JSON.stringify({ seeds, dest_city: destCity });
     let payload: RevealPayload | null = null;
     let path: StatusPath = "json";
+    // Dispatch one streamed AG-UI event into activity + progressive state.
+    // Throws on RUN_ERROR so the fallback ladder owns the failure. Never logs.
+    const applyAguiEvent = (event: AguiEvent) => {
+      const type = event.type;
+      if (type === "TOOL_CALL_START") {
+        const toolCallId =
+          typeof event.toolCallId === "string" ? event.toolCallId : "";
+        const toolCallName =
+          typeof event.toolCallName === "string" ? event.toolCallName : "";
+        if (!toolCallName) return;
+        setActivities((prev) => {
+          if (
+            toolCallId &&
+            prev.some((entry) => entry.toolCallId === toolCallId)
+          )
+            return prev;
+          if (
+            !toolCallId &&
+            prev.some(
+              (entry) => entry.toolCallName === toolCallName && !entry.done,
+            )
+          )
+            return prev;
+          return [
+            ...prev,
+            {
+              toolCallId: toolCallId || `${toolCallName}-${prev.length}`,
+              toolCallName,
+              phase: "start" as const,
+              done: false,
+            },
+          ];
+        });
+        return;
+      }
+      if (type === "TOOL_CALL_END") {
+        const toolCallId =
+          typeof event.toolCallId === "string" ? event.toolCallId : "";
+        if (!toolCallId) return;
+        setActivities((prev) =>
+          prev.map((entry) =>
+            entry.toolCallId === toolCallId
+              ? { ...entry, phase: "end" as const, done: true }
+              : entry,
+          ),
+        );
+        return;
+      }
+      if (type === "STATE_DELTA" && event.delta && typeof event.delta === "object") {
+        const delta = event.delta as Record<string, unknown>;
+        if (Array.isArray(delta.cards)) acc.cards = delta.cards;
+        if (Array.isArray(delta.brands)) acc.brands = delta.brands;
+        if (delta.map_center !== undefined) acc.center = delta.map_center;
+        if (delta.map_pins !== undefined) acc.pins = delta.map_pins;
+        else if (delta.pins !== undefined) acc.pins = delta.pins;
+        if (typeof delta.tourist_summary === "string" && delta.tourist_summary) {
+          acc.touristSummary = delta.tourist_summary;
+        }
+        if (typeof delta.transplant_summary === "string" && delta.transplant_summary) {
+          acc.transplantSummary = delta.transplant_summary;
+        }
+        const nestedTourist = delta.tourist;
+        if (nestedTourist && typeof nestedTourist === "object") {
+          const summary = (nestedTourist as Record<string, unknown>).summary;
+          if (typeof summary === "string" && summary) acc.touristSummary = summary;
+        }
+        const nestedTransplant = delta.transplant;
+        if (nestedTransplant && typeof nestedTransplant === "object") {
+          const summary = (nestedTransplant as Record<string, unknown>).summary;
+          if (typeof summary === "string" && summary) acc.transplantSummary = summary;
+        }
+        for (const key of [
+          "why_qloo",
+          "meta",
+          "qloo_query",
+          "taste_path_sentence",
+          "model",
+          "broadened",
+        ]) {
+          if (delta[key] !== undefined) acc.root[key] = delta[key];
+        }
+        // Progressive reveal: render exactly what this delta carried.
+        const partial = toProgressivePayload(acc, destCity);
+        if (partial) setReveal(partial);
+        return;
+      }
+      if (type === "STATE_SNAPSHOT" && event.snapshot && typeof event.snapshot === "object") {
+        const snapshot = event.snapshot as Record<string, unknown>;
+        if (Array.isArray(snapshot.cards)) acc.cards = snapshot.cards;
+        if (Array.isArray(snapshot.brands)) acc.brands = snapshot.brands;
+        if (snapshot.map_center !== undefined) acc.center = snapshot.map_center;
+        if (snapshot.map_pins !== undefined) acc.pins = snapshot.map_pins;
+        else if (snapshot.pins !== undefined) acc.pins = snapshot.pins;
+        if (typeof snapshot.tourist_summary === "string" && snapshot.tourist_summary) {
+          acc.touristSummary = snapshot.tourist_summary;
+        }
+        if (typeof snapshot.transplant_summary === "string" && snapshot.transplant_summary) {
+          acc.transplantSummary = snapshot.transplant_summary;
+        }
+        for (const key of [
+          "why_qloo",
+          "meta",
+          "qloo_query",
+          "taste_path_sentence",
+          "model",
+          "broadened",
+          "city",
+        ]) {
+          if (snapshot[key] !== undefined) acc.root[key] = snapshot[key];
+        }
+        const full = toSnapshotPayload(
+          snapshot,
+          acc.touristSummary,
+          acc.transplantSummary,
+          destCity,
+        );
+        if (full) {
+          payload = full;
+          path = "sse";
+          setReveal(full);
+        }
+        return;
+      }
+      if (type === "RUN_FINISHED") {
+        const result = event.result;
+        if (!payload && result && typeof result === "object") {
+          const normalized = toRevealPayload(result, destCity);
+          if (normalized) {
+            payload = normalized;
+            path = "sse";
+          }
+        }
+        if (!payload) {
+          const progressive = toProgressivePayload(acc, destCity);
+          if (progressive && progressive.transplant.cards.length >= 5) {
+            payload = progressive;
+            path = "sse";
+          }
+        }
+        if (payload) setReveal(payload);
+        return;
+      }
+      if (type === "RUN_ERROR") {
+        throw new Error("agui run error");
+      }
+    };
     try {
       const controller = new AbortController();
-      const timer = window.setTimeout(() => controller.abort(), 3000);
+      // Optimistic abort while the stream is idle; once frames flow the run
+      // gets a full completion budget so slow streams still finish live.
+      let live = false;
+      let longTimer: number | undefined;
+      const idleTimer = window.setTimeout(() => controller.abort(), 3000);
+      const markLive = () => {
+        if (!live) {
+          live = true;
+          window.clearTimeout(idleTimer);
+          longTimer = window.setTimeout(() => controller.abort(), 25000);
+        }
+      };
       try {
         const sseRes = await fetch("/agui", {
           method: "POST",
@@ -537,21 +754,18 @@ export default function App() {
           body,
           signal: controller.signal,
         });
-        if (sseRes.ok) {
-          const text = await sseRes.text();
-          const parsed = tryParseAguiStream(text, destCity);
-          if (parsed) {
-            payload = parsed;
-            path = "sse";
-          }
-        }
-      } catch {
-        /* SSE unavailable — the JSON fallback below handles it */
+        if (!sseRes.ok) throw new Error(`agui ${sseRes.status}`);
+        await streamAgui(sseRes, (event) => {
+          markLive();
+          applyAguiEvent(event);
+        });
+        if (!payload) throw new Error("agui produced no payload");
       } finally {
-        window.clearTimeout(timer);
+        window.clearTimeout(idleTimer);
+        if (longTimer !== undefined) window.clearTimeout(longTimer);
       }
     } catch {
-      /* never let the optimistic path break the submit */
+      /* SSE unavailable — the JSON fallback below handles it */
     }
     if (!payload) {
       try {
@@ -576,6 +790,7 @@ export default function App() {
     setRevealed(true);
     setStatusPath(path);
     setHighlighted(-1);
+    setStreaming(false);
     setSubmitting(false);
   };
 
@@ -882,6 +1097,23 @@ export default function App() {
       </section>
 
       <section id="reveal" aria-label="Tourist versus transplant" hidden={!revealed}>
+        <div id="agent-activity" aria-live="polite" data-stream-reader="streamAgui">
+          <p className="agent-activity-head">
+            Agent activity{streaming ? " · live" : ""}
+          </p>
+          {activities.map((activity) => (
+            <div
+              key={activity.toolCallId}
+              className="agent-activity-row"
+              data-tool-call={activity.toolCallName}
+            >
+              <span className="agent-activity-name">{activity.toolCallName}</span>
+              <span className="agent-activity-state">
+                {activity.done ? "done" : "running"}
+              </span>
+            </div>
+          ))}
+        </div>
         <div id="tourist-pane">
           <h2>Tourist</h2>
           <p id="tourist-summary">{reveal?.tourist.summary ?? ""}</p>

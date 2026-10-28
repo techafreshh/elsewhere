@@ -92,6 +92,41 @@ def test_free_text_orders_search_before_place(monkeypatch, tmp_path) -> None:
     assert raw.index("qloo_search") < raw.index("qloo_insights_place")
 
 
+def test_tool_names_ordered_and_cards_delta_before_finish(monkeypatch, tmp_path) -> None:
+    """The four loop tools stream as TOOL_CALL_START in loop order and a
+    cards STATE_DELTA precedes RUN_FINISHED (the progressive-reveal feed)."""
+    _isolated(monkeypatch, tmp_path)
+    response = client.post(
+        "/agui",
+        json={
+            "seeds": [{"text": "slow-burn Nollywood"}, {"id": "urn:entity:artist:test1"}],
+            "dest_city": "London",
+        },
+        headers={"Accept": "text/event-stream"},
+    )
+    assert response.status_code == 200
+    events = _collect_events(response.text)
+    starts = [e for e in events if e.get("type") == "TOOL_CALL_START"]
+    names = [e.get("toolCallName") for e in starts]
+    expected = ["qloo_search", "qloo_insights_place", "qloo_insights_brand", "summarize_panes"]
+    for name in expected:
+        assert name in names, name
+    order = [names.index(name) for name in expected]
+    assert order == sorted(order)
+    kinds = [e.get("type") for e in events]
+    assert "RUN_FINISHED" in kinds
+    finish_at = kinds.index("RUN_FINISHED")
+    card_deltas = [
+        i
+        for i, e in enumerate(events)
+        if e.get("type") == "STATE_DELTA"
+        and isinstance(e.get("delta"), dict)
+        and e["delta"].get("cards")
+    ]
+    assert card_deltas, "no STATE_DELTA carries cards"
+    assert card_deltas[0] < finish_at
+
+
 def test_agui_422_envelopes(monkeypatch, tmp_path) -> None:
     _isolated(monkeypatch, tmp_path)
     assert client.post("/agui", json={}).status_code == 422
