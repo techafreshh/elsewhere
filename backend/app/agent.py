@@ -37,6 +37,97 @@ _ORIG_SUMMARIZE = _summarizer_module.summarize_panes
 
 DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash"
 
+# Refinement keywords steering a re-run without restarting the session.
+# Single source of truth for refinement -> Qloo insight filter mapping.
+REFINEMENT_FILTERS: dict[str, dict[str, str]] = {
+    "late-night": {"filter.hours": "late_night"},
+    "cheaper": {"filter.price_level": "1,2"},
+}
+
+
+def _fold_refinement(value: object) -> str | None:
+    """Lowercase/strip fold; None for non-strings and empties."""
+    if not isinstance(value, str):
+        return None
+    folded = value.strip().lower()
+    return folded or None
+
+
+def normalized_refinements(refinements: object = None) -> list[str]:
+    """Sorted, deduped, folded refinement list (unknowns kept)."""
+    if refinements is None:
+        return []
+    if isinstance(refinements, str):
+        refinements = [refinements]
+    if not isinstance(refinements, (list, tuple)):
+        return []
+    seen: set[str] = set()
+    for item in refinements:
+        folded = _fold_refinement(item)
+        if folded and folded not in seen:
+            seen.add(folded)
+    return sorted(seen)
+
+
+def refinement_filters(refinements: object = None) -> dict[str, str]:
+    """Map refinement keywords to Qloo insight filter params.
+
+    Folding mirrors ``cache._normalize_refinements`` (strip/lowercase);
+    unknown strings are ignored for filters but stay in the cache key.
+    Never raises: non-list input yields {}.
+    """
+    if refinements is None:
+        return {}
+    if isinstance(refinements, str):
+        refinements = [refinements]
+    if not isinstance(refinements, (list, tuple)):
+        return {}
+    merged: dict[str, str] = {}
+    seen: set[str] = set()
+    for item in refinements:
+        folded = _fold_refinement(item)
+        if folded is None or folded in seen:
+            continue
+        seen.add(folded)
+        mapping = REFINEMENT_FILTERS.get(folded)
+        if mapping:
+            merged.update(mapping)
+    return merged
+
+
+def build_insights_params(
+    location_query: str,
+    entity_ids: list[str] | None = None,
+    take: int = 8,
+    refinements: object = None,
+    filter_type: str = "urn:entity:place",
+) -> dict:
+    """Full insights param dict: base keys plus refinement filters."""
+    params: dict = {
+        "filter.type": filter_type,
+        "filter.location.query": location_query,
+        "feature.explainability": "true",
+        "take": take,
+    }
+    if entity_ids:
+        params["signal.interests.entities"] = ",".join(entity_ids)
+    params.update(refinement_filters(refinements))
+    return params
+
+
+def refinement_notices(refinements: object = None, broadened: bool = False) -> list[str]:
+    """Human-readable echo of applied refinement filters."""
+    notices: list[str] = []
+    for ref in normalized_refinements(refinements):
+        mapping = REFINEMENT_FILTERS.get(ref)
+        if mapping:
+            for key in mapping:
+                notices.append(f"applied {key} for {ref}")
+    if broadened:
+        notices.append("broadened search to fill results")
+    return notices
+
+
 # Map fallback when the mock fixture carries no coordinates.
 _FALLBACK_CENTERS = {
     "london": [51.5074, -0.1278],
@@ -148,10 +239,24 @@ def resolve_seeds(seed_ids: list[str]) -> tuple[list[str], list[dict], list[str]
     return signals, confirmations, labels
 
 
-def _hero_call(city: str, signals: list[str] | None, take: int = 8) -> list:
+def _hero_call(
+    city: str,
+    signals: list[str] | None,
+    take: int = 8,
+    refinements: list[str] | None = None,
+) -> list:
     """Place hero call; degrades to [] on validation or transport failure."""
     try:
-        payload = _place_fn()(city, entity_ids=signals or None, take=take)
+        fn = _place_fn()
+        if refinements is None:
+            payload = fn(city, entity_ids=signals or None, take=take)
+        else:
+            try:
+                payload = fn(
+                    city, entity_ids=signals or None, take=take, refinements=refinements
+                )
+            except TypeError:
+                payload = fn(city, entity_ids=signals or None, take=take)
     except (ValueError, OSError):
         return []
     except Exception:
@@ -165,10 +270,24 @@ def _hero_call(city: str, signals: list[str] | None, take: int = 8) -> list:
     return entities if isinstance(entities, list) else []
 
 
-def _brand_names(city: str, signals: list[str] | None, take: int = 5) -> list[str]:
+def _brand_names(
+    city: str,
+    signals: list[str] | None,
+    take: int = 5,
+    refinements: list[str] | None = None,
+) -> list[str]:
     """Brand kicker names, sliced to take; [] on any failure."""
     try:
-        payload = _brand_fn()(city, entity_ids=signals or None, take=take)
+        fn = _brand_fn()
+        if refinements is None:
+            payload = fn(city, entity_ids=signals or None, take=take)
+        else:
+            try:
+                payload = fn(
+                    city, entity_ids=signals or None, take=take, refinements=refinements
+                )
+            except TypeError:
+                payload = fn(city, entity_ids=signals or None, take=take)
     except (ValueError, OSError):
         return []
     except Exception:
@@ -205,7 +324,9 @@ def _mock_slice() -> list[dict]:
     return []
 
 
-def _fallback_entities(city: str, signals: list[str]) -> tuple[list[dict], bool]:
+def _fallback_entities(
+    city: str, signals: list[str], refinements: list[str] | None = None
+) -> tuple[list[dict], bool]:
     """Three-rung ladder plus mock-slice fill. Returns (entities, broadened).
 
     Rung order per PRD section 6: drop audiences, drop tags, drop the
@@ -213,7 +334,7 @@ def _fallback_entities(city: str, signals: list[str]) -> tuple[list[dict], bool]
     first-hit path (five usable from the hero call) stays false. Never
     returns fewer than five; never raises.
     """
-    first = _usable_entities(_hero_call(city, signals or None, take=8))
+    first = _usable_entities(_hero_call(city, signals or None, take=8, refinements=refinements))
     if len(first) >= 5:
         return first[:8], False
     merged: list[dict] = list(first)
@@ -227,14 +348,22 @@ def _fallback_entities(city: str, signals: list[str]) -> tuple[list[dict], bool]
                 merged.append(entity)
 
     # Rung 1: retry without audiences (same live shape; mock returns fixture).
-    _absorb(_usable_entities(_hero_call(city, signals or None, take=8)))
+    _absorb(
+        _usable_entities(_hero_call(city, signals or None, take=8, refinements=refinements))
+    )
     # Rung 2: retry without tags.
     if len(merged) < 5:
-        _absorb(_usable_entities(_hero_call(city, signals or None, take=8)))
+        _absorb(
+            _usable_entities(
+                _hero_call(city, signals or None, take=8, refinements=refinements)
+            )
+        )
     # Rung 3: retry dropping the weakest (last) seed.
     if len(merged) < 5:
         trimmed = signals[:-1] if len(signals) > 1 else signals
-        _absorb(_usable_entities(_hero_call(city, trimmed or None, take=8)))
+        _absorb(
+            _usable_entities(_hero_call(city, trimmed or None, take=8, refinements=refinements))
+        )
     # Final fill from the full mock slice (bypasses patched hero fn).
     if len(merged) < 5:
         _absorb(_mock_slice())
@@ -261,7 +390,7 @@ def run_transplant(seed_ids: list[str], city: str, refinements: list[str] | None
     city_display = city.strip() if isinstance(city, str) and city.strip() else "London"
     refs = [r.strip() for r in (refinements or []) if isinstance(r, str) and r.strip()]
     signals, confirmations, labels = resolve_seeds(seed_ids or [])
-    entities, broadened = _fallback_entities(city_display, signals)
+    entities, broadened = _fallback_entities(city_display, signals, refinements=refs)
     picked = entities[:5]
 
     scores: list[float] = []
@@ -323,7 +452,10 @@ def run_transplant(seed_ids: list[str], city: str, refinements: list[str] | None
     except Exception:
         pass
 
-    brands = _brand_names(city_display, signals or None, take=5)
+    brands = _brand_names(city_display, signals or None, take=5, refinements=refs)
+    applied = refinement_filters(refs)
+    applied_refinements = normalized_refinements(refs)
+    notices = refinement_notices(refs, broadened=broadened)
     return {
         "tourist": {
             "summary": tourist_summary,
@@ -341,10 +473,13 @@ def run_transplant(seed_ids: list[str], city: str, refinements: list[str] | None
             "map_pins": [{"latlng": card["latlng"], "card_index": i} for i, card in enumerate(cards)],
         },
         "confirmations": confirmations,
+        "notices": notices,
         "meta": {
             "model": _model_slug(),
             "cache_hit": False,
             "broadened": broadened,
             "qloo_mode": _qloo_mode(),
+            "applied_refinements": applied_refinements,
+            "applied_filters": applied,
         },
     }

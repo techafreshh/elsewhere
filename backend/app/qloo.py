@@ -122,8 +122,19 @@ def _insights_query_string(
     entity_ids: list[str] | None,
     take: int,
     filter_type: str = PLACE_FILTER,
+    extra_filters: dict | None = None,
+    refinements: list[str] | None = None,
 ) -> str:
     """Build the live /v2/insights query string (GET, params only, no key)."""
+    if extra_filters is None and refinements is not None:
+        try:
+            try:
+                from backend.app.agent import refinement_filters as _refinement_filters
+            except ModuleNotFoundError:
+                from app.agent import refinement_filters as _refinement_filters
+            extra_filters = _refinement_filters(refinements)
+        except Exception:
+            extra_filters = None
     if filter_type == PLACE_FILTER:
         parts = ["filter.type=urn:entity:place"]
     else:
@@ -133,6 +144,12 @@ def _insights_query_string(
     parts.append("filter.location.query=" + urllib.parse.quote(location_query, safe=""))
     parts.append("feature.explainability=true")
     parts.append(f"take={take}")
+    if extra_filters:
+        for key, value in extra_filters.items():
+            parts.append(
+                f"{urllib.parse.quote(str(key), safe='')}"
+                f"={urllib.parse.quote(str(value), safe=',')}"
+            )
     return "&".join(parts)
 
 
@@ -174,8 +191,13 @@ def _insights_live(
     entity_ids: list[str] | None,
     take: int,
     filter_type: str,
+    refinements: list[str] | None = None,
+    extra_filters: dict | None = None,
 ) -> dict:
-    query_string = _insights_query_string(location_query, entity_ids, take, filter_type)
+    query_string = _insights_query_string(
+        location_query, entity_ids, take, filter_type,
+        extra_filters=extra_filters, refinements=refinements,
+    )
     payload = _live_get("/v2/insights", query_string)
     if isinstance(payload, dict) and isinstance(payload.get("entities"), list):
         return payload
@@ -187,6 +209,8 @@ def qloo_insights_place(
     location_query: str = "London",
     entity_ids: list[str] | None = None,
     take: int = DEFAULT_TAKE,
+    refinements: list[str] | None = None,
+    extra_filters: dict | None = None,
 ) -> dict:
     """Recommend places for a city, grounded in taste-signal entity IDs.
 
@@ -203,13 +227,18 @@ def qloo_insights_place(
         data = _load_json(INSIGHTS_MOCK)
         entities = data.get("entities", []) if isinstance(data, dict) else []
         return {**data, "entities": list(entities)[: max(take, 5)]}
-    return _insights_live(location_query, entity_ids, take, PLACE_FILTER)
+    return _insights_live(
+        location_query, entity_ids, take, PLACE_FILTER,
+        refinements=refinements, extra_filters=extra_filters,
+    )
 
 
 def qloo_insights_brand(
     location_query: str = "London",
     entity_ids: list[str] | None = None,
     take: int = 5,
+    refinements: list[str] | None = None,
+    extra_filters: dict | None = None,
 ) -> dict:
     """Brand kicker row; thin shared helper over the same live shape."""
     location_query = _require_non_empty_str(location_query, "location_query")
@@ -217,4 +246,7 @@ def qloo_insights_brand(
     entity_ids = _require_entity_ids(entity_ids)
     if not _has_key():
         return {"entities": list(BRAND_MOCK)[:take]}
-    return _insights_live(location_query, entity_ids, take, BRAND_FILTER)
+    return _insights_live(
+        location_query, entity_ids, take, BRAND_FILTER,
+        refinements=refinements, extra_filters=extra_filters,
+    )
