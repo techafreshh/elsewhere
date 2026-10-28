@@ -19,6 +19,20 @@ The same LLM writes both pane summaries. The difference is the evidence — and 
 
 🚧 Under active construction for the Oct 31, 2026 deadline. Architecture: FastAPI (AG-UI 1.0 agent endpoint + Qloo proxy) · React + Vite + beUI · OpenRouter. See [`.agents/PRDs/PRD.md`](.agents/PRDs/PRD.md) for the full product spec.
 
+## Quickstart
+
+```sh
+git clone <repo-url> && cd elsewhere
+python -m venv .venv && source .venv/bin/activate
+pip install -r backend/requirements.txt
+cp .env.example .env
+uvicorn backend.app.main:app --port 8000
+curl localhost:8000/api/health
+curl localhost:8000/
+docker compose up --build
+pytest backend/tests -q
+```
+
 ## License
 
 [MIT](LICENSE)
