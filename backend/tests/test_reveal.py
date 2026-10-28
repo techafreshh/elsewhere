@@ -115,6 +115,13 @@ def test_reveal_fetch_paths_in_served_bundle() -> None:
     assert bundle.count("urn:entity:") >= 12
 
 
+def test_agent_activity_and_stream_reader_in_served_bundle() -> None:
+    """Streaming reveal plus activity feed survive minification into dist."""
+    bundle = _served_bundle_text()
+    for anchor in ("agent-activity", "agent-activity-row", "streamAgui"):
+        assert anchor in bundle, anchor
+
+
 def test_reveal_template_floor_in_served_bundle() -> None:
     """Offline template copy: Tourist/transplant summaries, generic rows, Because cards."""
     bundle = _served_bundle_text()
