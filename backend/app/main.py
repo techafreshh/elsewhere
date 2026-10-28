@@ -174,7 +174,10 @@ async def transplant(request: Request) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
     stored = cache_get(key)
     if isinstance(stored, dict):
-        stored = {**stored, "meta": {**stored.get("meta", {}),
+        stored_meta = stored.get("meta")
+        if not isinstance(stored_meta, dict):
+            stored_meta = {}
+        stored = {**stored, "meta": {**stored_meta,
                                     "cache_hit": True, "qloo_mode": "cache"}}
         return JSONResponse(status_code=200, content=stored)
     payload = _build_transplant_payload(seed_ids, raw_city, refinements)

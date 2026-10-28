@@ -97,6 +97,15 @@ def test_transplant_corrupt_cache_file_misses_without_500() -> None:
     assert len(body["transplant"]["cards"]) >= 1
 
 
+def test_transplant_malformed_meta_never_500() -> None:
+    seeds = ["a", "b"]
+    key = cache_key(seeds, "London", [])
+    cache_put(key, {"transplant": {"cards": []}, "meta": "bad"})
+    response = client.post("/api/transplant", json={"seeds": seeds, "dest_city": "London"})
+    assert response.status_code == 200
+    assert response.json()["meta"]["cache_hit"] is True
+
+
 def test_gitignore_covers_env_and_cache() -> None:
     text = GITIGNORE.read_text(encoding="utf-8")
     assert ".env" in text
