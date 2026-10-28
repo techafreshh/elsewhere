@@ -51,9 +51,93 @@ interface TransplantPane {
   map_pins: { latlng: [number, number]; card_index: number }[];
 }
 
+interface WhyQlooInfo {
+  pathSentence: string;
+  query: string;
+}
+
 interface RevealPayload {
   tourist: { summary: string; items: string[] };
   transplant: TransplantPane;
+  whyQloo?: WhyQlooInfo;
+  model?: string;
+  broadened?: boolean;
+}
+
+const DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash";
+
+/** Normalize the why_qloo disclosure (params only, never the key). Never throws. */
+function toWhyQloo(root: Record<string, unknown>, cards: TransplantCard[], city: string): WhyQlooInfo {
+  let pathSentence = "";
+  let query = "";
+  try {
+    const raw = root.why_qloo;
+    if (raw && typeof raw === "object") {
+      const rec = raw as Record<string, unknown>;
+      if (typeof rec.taste_path_sentence === "string") pathSentence = rec.taste_path_sentence;
+      else if (typeof rec.pathSentence === "string") pathSentence = rec.pathSentence;
+      if (typeof rec.qloo_query === "string") query = rec.qloo_query;
+      else if (typeof rec.query === "string") query = rec.query;
+    }
+    if (!pathSentence && typeof root.taste_path_sentence === "string") pathSentence = root.taste_path_sentence;
+    if (!query && typeof root.qloo_query === "string") query = root.qloo_query;
+  } catch {
+    /* tolerant: fallbacks below fill the strip */
+  }
+  if (!pathSentence) {
+    try {
+      const first = cards[0]?.taste_path ?? [];
+      const cleaned = first.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+      if (cleaned.length > 0) pathSentence = cleaned.join(" \u2192 ");
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!pathSentence) {
+    const place = city.trim() || DEFAULT_CITY;
+    const firstName = cards[0]?.name || `${place} transplant spot 1`;
+    pathSentence = `home \u2192 your crowd \u2192 ${firstName}`;
+  }
+  if (!query) {
+    const place = city.trim() || DEFAULT_CITY;
+    query = `filter.type=urn:entity:place&filter.location.query=${encodeURIComponent(place)}&feature.explainability=true&take=8`;
+  }
+  return { pathSentence, query };
+}
+
+/** Normalize the honesty model slug. Never throws. */
+function toHonestyModel(root: Record<string, unknown>): string {
+  try {
+    const raw = root.why_qloo;
+    if (raw && typeof raw === "object") {
+      const rec = raw as Record<string, unknown>;
+      if (typeof rec.model === "string" && rec.model) return rec.model;
+    }
+    const meta = root.meta;
+    if (meta && typeof meta === "object") {
+      const rec = meta as Record<string, unknown>;
+      if (typeof rec.model === "string" && rec.model) return rec.model;
+    }
+    if (typeof root.model === "string" && root.model) return root.model;
+  } catch {
+    /* fall through to default */
+  }
+  return DEFAULT_MODEL;
+}
+
+/** Normalize the broadened flag from meta or the flattened snapshot. Never throws. */
+function toBroadened(root: Record<string, unknown>): boolean {
+  try {
+    const meta = root.meta;
+    if (meta && typeof meta === "object") {
+      const rec = meta as Record<string, unknown>;
+      if (typeof rec.broadened === "boolean") return rec.broadened;
+    }
+    if (typeof root.broadened === "boolean") return root.broadened;
+  } catch {
+    /* default false */
+  }
+  return false;
 }
 
 /** Coerce an unknown value into a [lat, lng] pair. Null on any mismatch. */
@@ -168,6 +252,10 @@ function templateCopy(city: string): RevealPayload {
     taste_path: ["home", "your crowd", `${place} transplant spot ${n}`],
     entity_id: `urn:entity:place:template-${n}`,
   }));
+  const whyQloo: WhyQlooInfo = {
+    pathSentence: ["home", "your crowd", `${place} transplant spot 1`].join(" \u2192 "),
+    query: `filter.type=urn:entity:place&filter.location.query=${encodeURIComponent(place)}&feature.explainability=true&take=8`,
+  };
   return {
     tourist: {
       summary: `Tourist take on ${place}: the usual top-10 list, no reasons attached.`,
@@ -183,6 +271,9 @@ function templateCopy(city: string): RevealPayload {
         card_index: i,
       })),
     },
+    whyQloo,
+    model: DEFAULT_MODEL,
+    broadened: false,
   };
 }
 
@@ -241,6 +332,9 @@ function toRevealPayload(data: unknown, city: string): RevealPayload | null {
       (entry): entry is string => typeof entry === "string" && entry.length > 0,
     );
     const mapData = toMapData(transplant, trimmed);
+    const whyQloo = toWhyQloo(root, trimmed, city);
+    const model = toHonestyModel(root);
+    const broadened = toBroadened(root);
     return {
       tourist: { summary: touristSummary, items },
       transplant: {
@@ -250,6 +344,9 @@ function toRevealPayload(data: unknown, city: string): RevealPayload | null {
         map_center: mapData.center,
         map_pins: mapData.pins,
       },
+      whyQloo,
+      model,
+      broadened,
     };
   } catch {
     return null;
@@ -301,6 +398,24 @@ function tryParseAguiStream(text: string, city: string): RevealPayload | null {
     // The AG-UI snapshot already carries the spatial proof and kicker row;
     // pass them through so the SSE path renders the map and brands too.
     const snap = snapshot as Record<string, unknown>;
+    // Carry the disclosure fields so the strip/toggle/alert render on SSE too.
+    let whyRaw: unknown = snap.why_qloo ?? null;
+    if (!whyRaw && (typeof snap.qloo_query === "string" || typeof snap.taste_path_sentence === "string")) {
+      whyRaw = {
+        taste_path_sentence: snap.taste_path_sentence,
+        qloo_query: snap.qloo_query,
+        model: snap.model,
+      };
+    }
+    let metaRaw: unknown = snap.meta ?? null;
+    if (!metaRaw && (typeof snap.model === "string" || typeof snap.broadened === "boolean")) {
+      metaRaw = { model: snap.model, broadened: snap.broadened };
+    } else if (metaRaw && typeof metaRaw === "object") {
+      const rec = { ...(metaRaw as Record<string, unknown>) };
+      if (typeof snap.broadened === "boolean" && typeof rec.broadened !== "boolean") rec.broadened = snap.broadened;
+      if (typeof snap.model === "string" && typeof rec.model !== "string") rec.model = snap.model;
+      metaRaw = rec;
+    }
     return toRevealPayload(
       {
         tourist: { summary: rawTourist, items: defaultTouristItems(city) },
@@ -311,6 +426,10 @@ function tryParseAguiStream(text: string, city: string): RevealPayload | null {
           map_center: snap.map_center,
           map_pins: snap.map_pins ?? snap.pins,
         },
+        why_qloo: whyRaw,
+        meta: metaRaw,
+        broadened: snap.broadened,
+        model: snap.model,
       },
       city,
     );
@@ -336,6 +455,8 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [highlighted, setHighlighted] = useState(-1);
   const [statusPath, setStatusPath] = useState<StatusPath>("idle");
+  const [whyOpen, setWhyOpen] = useState(false);
+  const [honestyOn, setHonestyOn] = useState(false);
   const queryRef = useRef("");
   const blurTimer = useRef<number | null>(null);
 
@@ -790,6 +911,56 @@ export default function App() {
               </span>
             ))}
           </div>
+          {reveal && (
+            <div className="why-strip">
+              <button
+                type="button"
+                className="why-toggle"
+                aria-expanded={whyOpen}
+                aria-controls="why-qloo-body"
+                onClick={() => setWhyOpen((v) => !v)}
+              >
+                Why Qloo won
+              </button>
+              {whyOpen && (
+                <motion.div
+                  id="why-qloo-body"
+                  className="why-body"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <p className="why-path">
+                    {(reveal.whyQloo?.pathSentence ||
+                      (reveal.transplant.cards[0]?.taste_path ?? []).filter(
+                        (entry): entry is string => typeof entry === "string" && entry.length > 0,
+                      ).join(" \u2192 ") ||
+                      `${city.trim() || DEFAULT_CITY} \u2192 your crowd \u2192 ${(reveal.transplant.cards[0]?.name || city.trim() || DEFAULT_CITY)}`)}
+                  </p>
+                  <code className="why-query">
+                    {(reveal.whyQloo?.query ||
+                      `filter.type=urn:entity:place&filter.location.query=${encodeURIComponent(city.trim() || DEFAULT_CITY)}&feature.explainability=true&take=8`)}
+                  </code>
+                </motion.div>
+              )}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={honestyOn}
+                className="honesty-toggle"
+                title="Reveal that both panes share one model"
+                onClick={() => setHonestyOn((v) => !v)}
+              >
+                honesty check: same model?
+              </button>
+              {honestyOn && (
+                <p className="honesty-line">both panes: {reveal.model ?? DEFAULT_MODEL}</p>
+              )}
+              {!!reveal.broadened && (
+                <div className="alert" role="alert">broadened search to fill results</div>
+              )}
+            </div>
+          )}
           <div className="transplant-grid">
             {(reveal?.transplant.cards ?? []).slice(0, 5).map((card, index) => (
               <article
