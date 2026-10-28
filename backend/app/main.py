@@ -19,9 +19,19 @@ except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
     from app.catalog import get_catalog, get_seed_pairs
 
 try:
-    from backend.app.agent import run_transplant
+    from backend.app.agent import (
+        normalized_refinements,
+        refinement_filters,
+        refinement_notices,
+        run_transplant,
+    )
 except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
-    from app.agent import run_transplant
+    from app.agent import (
+        normalized_refinements,
+        refinement_filters,
+        refinement_notices,
+        run_transplant,
+    )
 
 try:
     from backend.app.qloo import qloo_insights_brand, qloo_insights_place
@@ -91,9 +101,47 @@ def _qloo_mode() -> str:
     return "live" if os.environ.get("QLOO_API_KEY") else "mock"
 
 
+def _apply_refinement_echo(payload: dict, refinements: list[str]) -> dict:
+    """Layer refinement echo onto a transplant payload (idempotent)."""
+    if not isinstance(payload, dict):
+        return payload
+    try:
+        applied = refinement_filters(refinements)
+    except Exception:
+        applied = {}
+    try:
+        applied_refs = normalized_refinements(refinements)
+    except Exception:
+        applied_refs = []
+    broadened = False
+    try:
+        meta = payload.get("meta")
+        if isinstance(meta, dict):
+            broadened = bool(meta.get("broadened"))
+    except Exception:
+        broadened = False
+    try:
+        notices = refinement_notices(refinements, broadened=broadened)
+    except Exception:
+        notices = []
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    payload["meta"] = {
+        **meta,
+        "applied_refinements": applied_refs,
+        "applied_filters": applied if isinstance(applied, dict) else {},
+    }
+    payload["notices"] = notices
+    return payload
+
+
 def _build_transplant_payload(seed_ids: list[str], city: str, refinements: list[str]) -> dict:
     """Delegate to the agent loop (PRD section 10 envelope). Never raises."""
-    return run_transplant(seed_ids, city, refinements)
+    payload = run_transplant(seed_ids, city, refinements)
+    if not isinstance(payload, dict):
+        return payload
+    return _apply_refinement_echo(payload, refinements)
 
 
 @app.post("/api/transplant")
@@ -130,6 +178,11 @@ async def transplant(request: Request) -> JSONResponse:
             stored_meta = {}
         stored = {**stored, "meta": {**stored_meta,
                                     "cache_hit": True, "qloo_mode": "cache"}}
+        stored = _apply_refinement_echo(stored, refinements)
+        stored_meta = stored.get("meta")
+        if isinstance(stored_meta, dict):
+            stored_meta["cache_hit"] = True
+            stored_meta["qloo_mode"] = "cache"
         return JSONResponse(status_code=200, content=stored)
     payload = _build_transplant_payload(seed_ids, raw_city, refinements)
     try:
