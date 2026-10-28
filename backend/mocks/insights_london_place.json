@@ -1,0 +1,61 @@
+{
+  "location": "London",
+  "entities": [
+    {
+      "name": "Eko Market Rooftop",
+      "entity_id": "urn:entity:place:mock-london-001",
+      "explainability": 0.94,
+      "address": "12 Rye Lane, Peckham (synthetic mock)",
+      "tags": ["afrobeats", "late-night", "rooftop"]
+    },
+    {
+      "name": "Lagos Late Lounge",
+      "entity_id": "urn:entity:place:mock-london-002",
+      "explainability": 0.9,
+      "address": "44 Brixton Hill, Brixton (synthetic mock)",
+      "tags": ["afrobeats", "late-night", "owambe"]
+    },
+    {
+      "name": "Owambe Hall Dalston",
+      "entity_id": "urn:entity:place:mock-london-003",
+      "explainability": 0.86,
+      "address": "7 Kingsland Road, Dalston (synthetic mock)",
+      "tags": ["owambe", "party", "live-music"]
+    },
+    {
+      "name": "Shawarma Corner 2AM",
+      "entity_id": "urn:entity:place:mock-london-004",
+      "explainability": 0.82,
+      "address": "99 Deptford High Street (synthetic mock)",
+      "tags": ["shawarma", "late-night", "cheap-eats"]
+    },
+    {
+      "name": "Afrobeats Yard Stratford",
+      "entity_id": "urn:entity:place:mock-london-005",
+      "explainability": 0.78,
+      "address": "3 Romford Road, Stratford (synthetic mock)",
+      "tags": ["afrobeats", "dance", "street-food"]
+    },
+    {
+      "name": "Nollywood Rooftop Cinema",
+      "entity_id": "urn:entity:place:mock-london-006",
+      "explainability": 0.71,
+      "address": "55 Battersea Rise (synthetic mock)",
+      "tags": ["nollywood", "rooftop", "quiet"]
+    },
+    {
+      "name": "Danfo Night Kitchen",
+      "entity_id": "urn:entity:place:mock-london-007",
+      "explainability": 0.66,
+      "address": "18 Camberwell Road (synthetic mock)",
+      "tags": ["nigerian-kitchen", "late-night", "suya"]
+    },
+    {
+      "name": "Palm Wine Bar Hackney",
+      "entity_id": "urn:entity:place:mock-london-008",
+      "explainability": 0.6,
+      "address": "26 Mare Street, Hackney (synthetic mock)",
+      "tags": ["palm-wine", "bar", "highlife"]
+    }
+  ]
+}

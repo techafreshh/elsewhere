@@ -1,0 +1,16 @@
+[
+  {
+    "name": "Asake",
+    "entity_id": "urn:entity:artist:mock-asake-001",
+    "type": "urn:entity:artist",
+    "match_confidence": 0.98,
+    "disambiguation": "Afrobeats artist (synthetic mock fixture, not Qloo data)"
+  },
+  {
+    "name": "Asake Tribute Night",
+    "entity_id": "urn:entity:event:mock-asake-002",
+    "type": "urn:entity:event",
+    "match_confidence": 0.61,
+    "disambiguation": "Neighbourhood dance party (synthetic mock fixture, not Qloo data)"
+  }
+]
