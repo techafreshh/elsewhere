@@ -213,3 +213,107 @@ body {
   font-style: italic;
   border-top: 1px dashed var(--line);
 }
+
+#transplant-submit {
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: bold;
+  border: none;
+  border-radius: 0.6rem;
+  background: var(--terracotta);
+  color: #fff;
+  padding: 0.8rem 1.2rem;
+  cursor: pointer;
+}
+
+#transplant-submit:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+#transplant-submit:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+#transplant-status {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}
+
+#reveal {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 1rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 40rem) {
+  #reveal {
+    grid-template-columns: 1fr;
+  }
+}
+
+#tourist-pane,
+#transplant-pane {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 1.25rem;
+  box-sizing: border-box;
+}
+
+#tourist-pane h2,
+#transplant-pane h2 {
+  margin: 0 0 0.5rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.95rem;
+  opacity: 0.75;
+}
+
+#tourist-summary,
+#transplant-summary {
+  margin: 0 0 1rem;
+  line-height: 1.45;
+}
+
+#tourist-pane ul {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.tourist-row {
+  opacity: 0.85;
+}
+
+.transplant-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.transplant-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--terracotta);
+  border-radius: 0.6rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.transplant-card h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.why-you {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  opacity: 0.9;
+}
