@@ -1,0 +1,32 @@
+# Secrets — never commit. Qloo hackathon credentials must not enter source control.
+.env
+.env.*
+!.env.example
+
+# Qloo response cache — Qloo response data must never be committed to this public repo.
+# Warmed on the server by backend/scripts/seed_cache.py.
+backend/data/cache/
+data/cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
