@@ -22,9 +22,10 @@ def test_health_wrong_method_returns_405() -> None:
     assert response.status_code == 405
 
 
-def test_unknown_transplant_returns_404_not_405() -> None:
+def test_unknown_api_returns_404_not_405() -> None:
+    # /api/transplant is a real route now, so probe a path that stays unknown.
     response = client.post(
-        "/api/transplant", content="{bad json", headers={"Content-Type": "application/json"}
+        "/api/does-not-exist", content="{bad json", headers={"Content-Type": "application/json"}
     )
     assert response.status_code == 404
 
