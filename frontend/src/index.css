@@ -475,3 +475,46 @@ body {
   font-size: 0.9rem;
   line-height: 1.45;
 }
+
+/* Protocol-visible agent activity: one row per AG-UI TOOL_CALL_START/END. */
+#agent-activity {
+  grid-column: 1 / -1;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  box-sizing: border-box;
+}
+
+.agent-activity-head {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.agent-activity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.agent-activity-name {
+  font-family: monospace;
+  color: var(--ink);
+}
+
+.agent-activity-state {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--terracotta);
+}
