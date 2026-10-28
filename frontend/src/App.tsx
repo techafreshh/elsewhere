@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { motion } from "motion/react";
+import AffinityBadge from "./AffinityBadge.tsx";
 import TransplantMap from "./TransplantMap.tsx";
 import {
   CATEGORIES,
@@ -62,6 +63,21 @@ function toLatLng(value: unknown): [number, number] | null {
   if (typeof lat !== "number" || typeof lng !== "number") return null;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   return [lat, lng];
+}
+
+/** Coerce an unknown multiplier to 1-decimal finite. Falls back to 1.0. */
+function toAffinity(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1.0;
+  return Math.round(n * 10) / 10;
+}
+
+/** Keep only non-empty strings from a taste_path candidate. Never throws. */
+function toTastePath(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is string => typeof entry === "string" && entry.length > 0,
+  );
 }
 
 const FALLBACK_CENTER: [number, number] = [51.5074, -0.1278];
@@ -212,6 +228,8 @@ function toRevealPayload(data: unknown, city: string): RevealPayload | null {
         ...(rec as Partial<TransplantCard>),
         name,
         why_you: why,
+        affinity_multiplier: toAffinity(rec.affinity_multiplier),
+        taste_path: toTastePath(rec.taste_path),
         ...(latlng ? { latlng } : {}),
       });
       if (cards.length >= 5) break;
@@ -785,7 +803,24 @@ export default function App() {
                 data-highlighted={highlighted === index ? "true" : "false"}
               >
                 <h3>{card.name}</h3>
+                <AffinityBadge value={card.affinity_multiplier ?? 1.0} />
                 <p className="why-you">{card.why_you ?? card.whyYou ?? ""}</p>
+                <p
+                  className="taste-path"
+                  aria-label={(card.taste_path ?? [])
+                    .filter(
+                      (entry): entry is string =>
+                        typeof entry === "string" && entry.length > 0,
+                    )
+                    .join(" \u2192 ")}
+                >
+                  {(card.taste_path ?? [])
+                    .filter(
+                      (entry): entry is string =>
+                        typeof entry === "string" && entry.length > 0,
+                    )
+                    .join(" \u2192 ")}
+                </p>
               </article>
             ))}
           </div>

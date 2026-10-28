@@ -371,3 +371,23 @@ body {
   line-height: 1.45;
   opacity: 0.9;
 }
+
+.affinity-badge {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fffdf8;
+  background: var(--terracotta);
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  margin: 0 0 0.4rem;
+}
+
+.taste-path {
+  margin: 0.4rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  opacity: 0.7;
+}
