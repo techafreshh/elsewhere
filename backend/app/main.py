@@ -5,7 +5,7 @@ from pathlib import Path
 from statistics import median
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 try:
@@ -37,6 +37,11 @@ try:
     from backend.app.qloo import qloo_insights_brand, qloo_insights_place
 except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
     from app.qloo import qloo_insights_brand, qloo_insights_place
+
+try:
+    from backend.app.agui import iter_transplant_events
+except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
+    from app.agui import iter_transplant_events
 
 MODEL_SLUG = os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash")
 
@@ -190,6 +195,46 @@ async def transplant(request: Request) -> JSONResponse:
     except (ValueError, OSError):
         pass  # cache write failure must never fail the demo
     return JSONResponse(status_code=200, content=payload)
+
+
+@app.post("/agui")
+async def agui(request: Request):
+    """AG-UI 1.0 SSE stream of the transplant loop. Never cached."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=422, content={"detail": "Invalid JSON body"})
+    if not isinstance(body, dict):
+        return JSONResponse(status_code=422, content={"detail": "Body must be a JSON object"})
+    seed_ids = _extract_seed_ids(body.get("seeds"))
+    if not seed_ids:
+        return JSONResponse(status_code=422, content={"detail": "seeds must be a non-empty list"})
+    raw_city = body.get("dest_city", body.get("city", body.get("destCity", "")))
+    if not isinstance(raw_city, str) or not raw_city.strip():
+        return JSONResponse(status_code=422, content={"detail": "dest_city must be a non-empty string"})
+    raw_refs = body.get("refinements", [])
+    if raw_refs is None:
+        raw_refs = []
+    if isinstance(raw_refs, str):
+        raw_refs = [raw_refs]
+    if not isinstance(raw_refs, (list, tuple)):
+        return JSONResponse(status_code=422, content={"detail": "refinements must be a list of strings"})
+    refinements = [r.strip() for r in raw_refs if isinstance(r, str) and r.strip()]
+    try:
+        cache_key(seed_ids, raw_city, refinements)
+    except ValueError as exc:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+    return StreamingResponse(
+        iter_transplant_events(seed_ids, raw_city, refinements),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.api_route("/agui", methods=["GET", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
+def agui_method_not_allowed() -> JSONResponse:
+    """POST-only: wrong-method hits on the known /agui path stay 405."""
+    return JSONResponse(status_code=405, content={"detail": "Method Not Allowed"})
 
 
 @app.api_route("/api", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
