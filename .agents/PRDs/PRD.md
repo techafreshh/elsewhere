@@ -276,7 +276,8 @@ Errors stream as `RUN_ERROR`; the UI falls back to `POST /api/transplant`. The Q
 
 ### Phase 1 — Mock-mode build (Day 1, Oct 28)
 **Goal:** the whole product works end-to-end without the key.
-- [ ] Scaffold repo (backend + frontend + Docker + Caddyfile + .env.example + LICENSE + .gitignore)
+- [ ] **Walking skeleton first:** repo scaffold (backend + frontend + Docker + Caddyfile + .env.example + LICENSE + .gitignore) with `GET /api/health` live in mock mode
+- [ ] **Ship a CI workflow** (`.github/workflows/ci.yml`) running backend pytest + frontend build on every PR — delivered with the scaffold so the merge gate engages from lap 2
 - [ ] `qloo.py` client + mock fixtures; `catalog` (chips/cities/seed pairs as config with placeholder IDs)
 - [ ] Transplant agent, cache, summarizer (stubbed LLM if OpenRouter unverified) + pytest green
 - [ ] `agui.py`: AG-UI 1.0 event endpoint (SSE) wrapping the same agent loop; `@ag-ui/client` consumer; agent-activity fed by real events
@@ -298,6 +299,13 @@ Errors stream as `RUN_ERROR`; the UI falls back to `POST /api/transplant`. The Q
 - [ ] Git secret scan; README (≤10 steps); repo public + MIT in About
 - [ ] Devpost: description text (features + "why Qloo-powered"), testing instructions, draft saved early; **submit before the evening** (deadline 4:45am WAT Oct 31 — nothing ships at 4am)
 - **Validation:** acceptance checklist §11 fully checked.
+
+## 12.1 Operator checklist (NOT factory issues — laps cannot do these)
+1. **Watch for the Qloo key** (spam folder); ping Discord #api-help if it slips past ~24h. When it lands: it goes in `.env` at deploy time only — never committed, never in factory config.
+2. **Instabox prerequisite:** confirm the shared `factory-base-r2` snapshot exists VPS-side (it does if bi-ai-ui/tic-tac-toe ran recently); if missing, run `foreman bake elsewhere` VPS-side before the first lap.
+3. **Deploy (Phase 3):** Docker + Caddy on the VPS, public HTTPS URL, run `backend/scripts/seed_cache.py` with the real key to warm the 4 seeded pairs, then the key-removed drill.
+4. **OpenRouter key:** needed at deploy time for live pane summaries (`OPENROUTER_API_KEY` in VPS `.env`); factory laps and pytest run fine without it (stub/template fallback).
+5. **Devpost:** save the draft early with the description text; submit well before Oct 31, 4:45am WAT. No demo video required.
 
 ## 13. Future Considerations (post-judging)
 - Multi-city comparison ("London vs Toronto for *your* taste")
