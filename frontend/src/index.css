@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f3ec;
+  --ink: #1a1a1a;
+  --terracotta: #c96f4a;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--ink);
+  font-family: Georgia, serif;
+}
+
+/* Background literal kept in the served CSS so GET / carries the F7F3EC theme. */
+.theme-cream {
+  background-color: #f7f3ec;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  text-align: center;
+}
+
+.app-shell h1 {
+  letter-spacing: 0.35em;
+  font-size: 3rem;
+  margin: 0;
+}
+
+.app-shell p {
+  opacity: 0.7;
+}
