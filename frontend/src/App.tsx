@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { motion } from "motion/react";
+import TransplantMap from "./TransplantMap.tsx";
 import {
   CATEGORIES,
   FALLBACK_CHIPS,
@@ -33,6 +34,7 @@ function isChipList(value: unknown): value is Chip[] {
 interface TransplantCard {
   name: string;
   address?: string;
+  latlng?: [number, number];
   why_you?: string;
   whyYou?: string;
   affinity_multiplier?: number;
@@ -40,10 +42,69 @@ interface TransplantCard {
   entity_id?: string;
 }
 
+interface TransplantPane {
+  summary: string;
+  cards: TransplantCard[];
+  brands: string[];
+  map_center: [number, number];
+  map_pins: { latlng: [number, number]; card_index: number }[];
+}
+
 interface RevealPayload {
   tourist: { summary: string; items: string[] };
-  transplant: { summary: string; cards: TransplantCard[] };
+  transplant: TransplantPane;
 }
+
+/** Coerce an unknown value into a [lat, lng] pair. Null on any mismatch. */
+function toLatLng(value: unknown): [number, number] | null {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const [lat, lng] = value;
+  if (typeof lat !== "number" || typeof lng !== "number") return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return [lat, lng];
+}
+
+const FALLBACK_CENTER: [number, number] = [51.5074, -0.1278];
+
+/** Normalize transplant map fields; card latlngs backstop missing pins, the
+ *  London fallback center backstops a missing center. Never throws. */
+function toMapData(
+  transplant: Record<string, unknown>,
+  cards: TransplantCard[],
+): { center: [number, number]; pins: { latlng: [number, number]; card_index: number }[] } {
+  const center = toLatLng(transplant.map_center) ?? FALLBACK_CENTER;
+  const rawPins = Array.isArray(transplant.map_pins) ? transplant.map_pins : [];
+  const pins: { latlng: [number, number]; card_index: number }[] = [];
+  rawPins.forEach((entry, i) => {
+    if (!entry || typeof entry !== "object") return;
+    const rec = entry as Record<string, unknown>;
+    const latlng = toLatLng(rec.latlng);
+    if (!latlng) return;
+    pins.push({
+      latlng,
+      card_index: typeof rec.card_index === "number" ? rec.card_index : i,
+    });
+  });
+  if (pins.length === 0) {
+    cards.slice(0, 5).forEach((card, i) => {
+      pins.push({
+        latlng: card.latlng ?? [center[0] + 0.01 * i, center[1] + 0.012 * i],
+        card_index: i,
+      });
+    });
+  }
+  return { center, pins: pins.slice(0, 5) };
+}
+
+/** Verbatim brand-kicker fallback (mirrors qloo.BRAND_MOCK) so the kicker row
+ *  renders even when the API is unreachable. */
+const FALLBACK_BRANDS: string[] = [
+  "Eko Bite LDN",
+  "Owambe Suya Co",
+  "Danfo Kitchen Express",
+  "Palm & Pine Grocers",
+  "Nollywood Nights Pop-up",
+];
 
 type StatusPath = "idle" | "sse" | "json" | "template";
 
@@ -82,6 +143,15 @@ function defaultTouristItems(city: string): string[] {
  *  with zero network and the two summaries always differ. */
 function templateCopy(city: string): RevealPayload {
   const place = city.trim() || DEFAULT_CITY;
+  const cards: TransplantCard[] = [1, 2, 3, 4, 5].map((n) => ({
+    name: `${place} transplant spot ${n}`,
+    address: place,
+    latlng: [FALLBACK_CENTER[0] + 0.01 * (n - 1), FALLBACK_CENTER[1] + 0.012 * (n - 1)],
+    why_you: `Because home nights belong at ${place} transplant spot ${n}`,
+    affinity_multiplier: 1.0,
+    taste_path: ["home", "your crowd", `${place} transplant spot ${n}`],
+    entity_id: `urn:entity:place:template-${n}`,
+  }));
   return {
     tourist: {
       summary: `Tourist take on ${place}: the usual top-10 list, no reasons attached.`,
@@ -89,13 +159,12 @@ function templateCopy(city: string): RevealPayload {
     },
     transplant: {
       summary: `Grounded transplant of home tastes to ${place}: spots where your crowd already gathers, backed by Qloo affinity signals.`,
-      cards: [1, 2, 3, 4, 5].map((n) => ({
-        name: `${place} transplant spot ${n}`,
-        address: place,
-        why_you: `Because home nights belong at ${place} transplant spot ${n}`,
-        affinity_multiplier: 1.0,
-        taste_path: ["home", "your crowd", `${place} transplant spot ${n}`],
-        entity_id: `urn:entity:place:template-${n}`,
+      cards,
+      brands: [...FALLBACK_BRANDS],
+      map_center: [...FALLBACK_CENTER] as [number, number],
+      map_pins: cards.map((card, i) => ({
+        latlng: [...(card.latlng as [number, number])] as [number, number],
+        card_index: i,
       })),
     },
   };
@@ -138,13 +207,31 @@ function toRevealPayload(data: unknown, city: string): RevealPayload | null {
             ? rec.whyYou
             : "";
       if (!name || !why) continue;
-      cards.push({ ...(rec as Partial<TransplantCard>), name, why_you: why });
+      const latlng = toLatLng(rec.latlng);
+      cards.push({
+        ...(rec as Partial<TransplantCard>),
+        name,
+        why_you: why,
+        ...(latlng ? { latlng } : {}),
+      });
       if (cards.length >= 5) break;
     }
     if (!touristSummary || !transplantSummary || cards.length < 5) return null;
+    const trimmed = cards.slice(0, 5);
+    const rawBrands = Array.isArray(transplant.brands) ? transplant.brands : [];
+    const brands = rawBrands.filter(
+      (entry): entry is string => typeof entry === "string" && entry.length > 0,
+    );
+    const mapData = toMapData(transplant, trimmed);
     return {
       tourist: { summary: touristSummary, items },
-      transplant: { summary: transplantSummary, cards: cards.slice(0, 5) },
+      transplant: {
+        summary: transplantSummary,
+        cards: trimmed,
+        brands,
+        map_center: mapData.center,
+        map_pins: mapData.pins,
+      },
     };
   } catch {
     return null;
@@ -193,10 +280,19 @@ function tryParseAguiStream(text: string, city: string): RevealPayload | null {
       typeof snapshot.transplant_summary === "string" && snapshot.transplant_summary
         ? snapshot.transplant_summary
         : deltaTransplant;
+    // The AG-UI snapshot already carries the spatial proof and kicker row;
+    // pass them through so the SSE path renders the map and brands too.
+    const snap = snapshot as Record<string, unknown>;
     return toRevealPayload(
       {
         tourist: { summary: rawTourist, items: defaultTouristItems(city) },
-        transplant: { summary: rawTransplant, cards: snapshot.cards },
+        transplant: {
+          summary: rawTransplant,
+          cards: snap.cards,
+          brands: snap.brands,
+          map_center: snap.map_center,
+          map_pins: snap.map_pins ?? snap.pins,
+        },
       },
       city,
     );
@@ -220,6 +316,7 @@ export default function App() {
   const [reveal, setReveal] = useState<RevealPayload | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [highlighted, setHighlighted] = useState(-1);
   const [statusPath, setStatusPath] = useState<StatusPath>("idle");
   const queryRef = useRef("");
   const blurTimer = useRef<number | null>(null);
@@ -339,8 +436,33 @@ export default function App() {
     setReveal(payload);
     setRevealed(true);
     setStatusPath(path);
+    setHighlighted(-1);
     setSubmitting(false);
   };
+
+  // Spatial proof on first paint: run the hero transplant automatically so the
+  // Leaflet map, its 5 pins, and the brand kicker row render with no gesture.
+  useEffect(() => {
+    void onSubmit();
+    // Single first-paint run; later renders go through the submit button.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Pin → card linkage: highlight the matching card and bring it into view,
+  // satisfying either acceptance branch (highlight class or scroll).
+  const onPinClick = (index: number) => {
+    setHighlighted(index);
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`.transplant-card[data-index="${index}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  };
+
+  const cardNames = useMemo(
+    () => (reveal?.transplant.cards ?? []).map((card) => card.name),
+    [reveal],
+  );
 
   const grouped = useMemo(
     () =>
@@ -635,11 +757,32 @@ export default function App() {
         <div id="transplant-pane">
           <h2>Transplant</h2>
           <p id="transplant-summary">{reveal?.transplant.summary ?? ""}</p>
+          {reveal && (
+            <TransplantMap
+              center={reveal.transplant.map_center}
+              pins={reveal.transplant.map_pins}
+              names={cardNames}
+              onPinClick={onPinClick}
+            />
+          )}
+          <div id="brands" data-testid="brand-kicker-row" aria-label="Brand kickers">
+            {(reveal?.transplant.brands ?? []).map((brand) => (
+              <span key={brand} className="brand-kicker">
+                {brand}
+              </span>
+            ))}
+          </div>
           <div className="transplant-grid">
             {(reveal?.transplant.cards ?? []).slice(0, 5).map((card, index) => (
               <article
                 key={`${index}-${card.entity_id || card.name}`}
-                className="transplant-card"
+                className={
+                  highlighted === index
+                    ? "transplant-card card--highlight"
+                    : "transplant-card"
+                }
+                data-index={index}
+                data-highlighted={highlighted === index ? "true" : "false"}
               >
                 <h3>{card.name}</h3>
                 <p className="why-you">{card.why_you ?? card.whyYou ?? ""}</p>
