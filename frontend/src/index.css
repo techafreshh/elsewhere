@@ -177,6 +177,59 @@ body {
   color: #fff;
 }
 
+/* Approval pills: one per free-text candidate, confirm/skip inline. */
+#approval-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.approval-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.88rem;
+  border: 1px solid var(--terracotta);
+  background: #f9e8dd;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.3rem 0.4rem 0.3rem 0.8rem;
+}
+
+.approval-label {
+  font-weight: bold;
+}
+
+.approval-pill button[data-confirm="true"] {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: bold;
+  border: none;
+  border-radius: 999px;
+  background: var(--terracotta);
+  color: #fff;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+}
+
+.approval-pill button[data-skip="true"] {
+  font: inherit;
+  font-size: 0.82rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+}
+
+.approval-empty {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}
+
 .combobox-field {
   position: relative;
 }
@@ -278,6 +331,42 @@ body {
 #transplant-summary {
   margin: 0 0 1rem;
   line-height: 1.45;
+}
+
+/* Refinement pills: one-tap steering that re-runs the transplant live. */
+#refinement-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 0.25rem;
+}
+
+.refinement-pill {
+  font: inherit;
+  font-size: 0.88rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+.refinement-pill-on {
+  border-color: var(--terracotta);
+  background: var(--terracotta);
+  color: #fff;
+}
+
+#notices {
+  margin: 0.25rem 0 0.75rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  opacity: 0.75;
+}
+
+#notices:empty {
+  display: none;
 }
 
 #tourist-pane ul {

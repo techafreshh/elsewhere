@@ -141,6 +141,70 @@ function toBroadened(root: Record<string, unknown>): boolean {
   return false;
 }
 
+/** Free-text approval candidate surfaced by resolve_seeds. Never throws. */
+interface ConfirmationCandidate {
+  name: string;
+  entity_id: string;
+  confidence?: number;
+}
+
+interface Confirmation {
+  text: string;
+  candidates: ConfirmationCandidate[];
+}
+
+/** Normalize the JSON `confirmations` envelope into pill-ready candidates.
+ *  Drops candidates missing name/entity_id or not starting with
+ *  `urn:entity:`; confidence coerces via Number() like agent.resolve_seeds
+ *  and is omitted when non-numeric. Null on any mismatch. Never throws. */
+function toConfirmations(data: unknown): Confirmation[] {
+  try {
+    if (!data || typeof data !== "object") return [];
+    const raw = (data as Record<string, unknown>).confirmations;
+    if (!Array.isArray(raw)) return [];
+    const out: Confirmation[] = [];
+    for (const entry of raw) {
+      if (!entry || typeof entry !== "object") continue;
+      const rec = entry as Record<string, unknown>;
+      if (typeof rec.text !== "string" || !rec.text) continue;
+      const rawCands = Array.isArray(rec.candidates) ? rec.candidates : [];
+      const candidates: ConfirmationCandidate[] = [];
+      for (const cand of rawCands) {
+        if (!cand || typeof cand !== "object") continue;
+        const cref = cand as Record<string, unknown>;
+        if (typeof cref.name !== "string" || !cref.name) continue;
+        if (typeof cref.entity_id !== "string") continue;
+        if (!cref.entity_id.startsWith("urn:entity:")) continue;
+        const n = Number(cref.confidence);
+        candidates.push(
+          Number.isFinite(n)
+            ? { name: cref.name, entity_id: cref.entity_id, confidence: n }
+            : { name: cref.name, entity_id: cref.entity_id },
+        );
+      }
+      out.push({ text: rec.text, candidates });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Normalize the JSON `notices` envelope into renderable lines.
+ *  Non-string entries are dropped. Never throws. */
+function toNotices(data: unknown): string[] {
+  try {
+    if (!data || typeof data !== "object") return [];
+    const raw = (data as Record<string, unknown>).notices;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(
+      (entry): entry is string => typeof entry === "string" && entry.length > 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
 /** Coerce an unknown value into a [lat, lng] pair. Null on any mismatch. */
 function toLatLng(value: unknown): [number, number] | null {
   if (!Array.isArray(value) || value.length !== 2) return null;
@@ -208,6 +272,42 @@ const FALLBACK_BRANDS: string[] = [
 ];
 
 type StatusPath = "idle" | "sse" | "json" | "template";
+
+/** Wire seed: chip URNs travel as bare strings; typed prompt free text
+ *  travels as `{text: ...}` so backend `parse_seeds` routes it to
+ *  `resolve_text_seed` (bare strings are classified as chips and never
+ *  yield `confirmations`). */
+type Seed = string | { text: string };
+
+/** Dedupe a mixed seed list: strings by trimmed value, `{text}` objects
+ *  by folded text. Drops empties and anything else. Never throws. */
+function dedupeSeeds(rawSeeds: unknown): Seed[] {
+  try {
+    if (!Array.isArray(rawSeeds)) return [];
+    const seen = new Set<string>();
+    const out: Seed[] = [];
+    for (const seed of rawSeeds) {
+      if (typeof seed === "string") {
+        const trimmed = seed.trim();
+        if (!trimmed || seen.has(trimmed)) continue;
+        seen.add(trimmed);
+        out.push(trimmed);
+      } else if (seed && typeof seed === "object") {
+        const text = (seed as Record<string, unknown>).text;
+        if (typeof text !== "string") continue;
+        const trimmed = text.trim();
+        if (!trimmed) continue;
+        const key = `text:${trimmed}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ text: trimmed });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
 
 /** Hero London seed URNs from backend/data/seed_pairs.json — the submit
  *  fallback when no chips are picked so the hero pair works with the API down. */
@@ -491,6 +591,11 @@ export default function App() {
   const [highlight, setHighlight] = useState(-1);
   const [reveal, setReveal] = useState<RevealPayload | null>(null);
   const [revealed, setRevealed] = useState(false);
+  const [confirmations, setConfirmations] = useState<Confirmation[]>([]);
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  const [refinements, setRefinements] = useState<string[]>([]);
+  const [notices, setNotices] = useState<string[]>([]);
+  const lastSeedsRef = useRef<Seed[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [activities, setActivities] = useState<AguiActivity[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -554,14 +659,22 @@ export default function App() {
     );
   };
 
-  // Submit pipeline: Tier-1 state-driven POST /agui SSE stream (3s optimistic
-  // abort while idle, 25s once frames flow), then the POST /api/transplant
-  // JSON fallback, then the inlined template-copy floor. TOOL_CALL_START/END
-  // rows and STATE_DELTA progressive reveals dispatch as frames arrive; a
-  // forced 500, RUN_ERROR, abort, or null final payload silently abandons the
-  // stream for the JSON ladder. Never rejects and never surfaces a 500 —
-  // every path ends in panes.
-  const onSubmit = async () => {
+  // Parameterised submit core: Tier-1 state-driven POST /agui SSE stream
+  // (3s optimistic abort while idle, 25s once frames flow), then the POST
+  // /api/transplant JSON fallback, then the inlined template-copy floor.
+  // Confirmations plus notices only ride the JSON envelope (the AG-UI stream
+  // never emits them), so the JSON endpoint is fetched on every submit: it
+  // adopts the cards when SSE produced nothing and always refreshes the
+  // approval pills and the notices line. TOOL_CALL_START/END rows and
+  // STATE_DELTA progressive reveals dispatch as frames arrive; a forced 500,
+  // RUN_ERROR, abort, or null final payload silently abandons the stream for
+  // the JSON ladder. Never rejects and never surfaces a 500 — every path
+  // ends in panes.
+  const runSubmit = async (opts?: {
+    seeds?: Seed[];
+    refinements?: string[];
+    preserveConfirmations?: boolean;
+  }) => {
     if (submitting) return;
     setSubmitting(true);
     // Protocol-visible waiting state: empty panes plus a live activity feed
@@ -579,9 +692,13 @@ export default function App() {
     setStreaming(true);
     setReveal(null);
     setRevealed(true);
-    const seeds = selected.length > 0 ? selected : HERO_LONDON_SEEDS;
     const destCity = city.trim() || DEFAULT_CITY;
-    const body = JSON.stringify({ seeds, dest_city: destCity });
+    const rawSeeds = opts?.seeds ?? lastSeedsRef.current;
+    const deduped = dedupeSeeds(rawSeeds);
+    const seeds: Seed[] = deduped.length > 0 ? deduped : HERO_LONDON_SEEDS;
+    lastSeedsRef.current = seeds;
+    const effRefs = opts?.refinements ?? refinements;
+    const body = JSON.stringify({ seeds, dest_city: destCity, refinements: effRefs });
     let payload: RevealPayload | null = null;
     let path: StatusPath = "json";
     // Dispatch one streamed AG-UI event into activity + progressive state.
@@ -767,20 +884,32 @@ export default function App() {
     } catch {
       /* SSE unavailable — the JSON fallback below handles it */
     }
-    if (!payload) {
-      try {
-        const res = await fetch("/api/transplant", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-        });
-        if (res.ok) {
-          const data: unknown = await res.json();
-          payload = toRevealPayload(data, destCity);
-        }
-      } catch {
-        payload = null;
+    let jsonData: unknown = null;
+    try {
+      const res = await fetch("/api/transplant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      if (res.ok) jsonData = (await res.json()) as unknown;
+    } catch {
+      jsonData = null;
+    }
+    if (!payload && jsonData) {
+      payload = toRevealPayload(jsonData, destCity);
+      if (payload) path = "json";
+    }
+    if (jsonData) {
+      // Refinement re-runs reuse resolved seeds, so the fresh envelope
+      // carries no confirmations — keep the pills the prompt submit showed.
+      if (!opts?.preserveConfirmations) {
+        setConfirmations(toConfirmations(jsonData));
+        setDismissed([]);
       }
+      setNotices(toNotices(jsonData));
+    } else if (!opts?.preserveConfirmations) {
+      setConfirmations([]);
+      setNotices([]);
     }
     if (!payload) {
       payload = templateCopy(destCity);
@@ -792,6 +921,49 @@ export default function App() {
     setHighlighted(-1);
     setStreaming(false);
     setSubmitting(false);
+  };
+
+  // Hero Transplant button: prompt free text joins the seed set as a
+  // `{text}` object (deduped) so typed tastes reach `resolve_text_seed`
+  // and come back as `confirmations`; bare strings would classify as
+  // chips and yield none. Refinements reset for the fresh search.
+  // The existing saveTaste effect persists prompt unchanged.
+  const onSubmit = async () => {
+    const text = prompt.trim();
+    const seeds: Seed[] = dedupeSeeds([
+      ...selected,
+      ...(text ? [{ text }] : []),
+    ]);
+    setRefinements([]);
+    await runSubmit({ seeds, refinements: [] });
+  };
+
+  // Approval pills: Confirm resolves the candidate into the seed set and
+  // re-runs with resolved IDs; Skip dismisses that candidate pill only
+  // and never blocks submit.
+  const confirmCandidate = (entityId: string) => {
+    const next = selected.includes(entityId) ? selected : [...selected, entityId];
+    setSelected(next);
+    void runSubmit({ seeds: next, refinements });
+  };
+
+  const skipCandidate = (entityId: string) => {
+    setDismissed((prev) => (prev.includes(entityId) ? prev : [...prev, entityId]));
+  };
+
+  // Refinement pills: toggle the key, then re-submit the last resolved
+  // seeds plus city with the new refinements so the server cache_key hits
+  // and cards visibly re-render (or the notices line explains why).
+  const toggleRefinement = (key: string) => {
+    const next = refinements.includes(key)
+      ? refinements.filter((entry) => entry !== key)
+      : [...refinements, key];
+    setRefinements(next);
+    void runSubmit({
+      seeds: lastSeedsRef.current,
+      refinements: next,
+      preserveConfirmations: true,
+    });
   };
 
   // Spatial proof on first paint: run the hero transplant automatically so the
@@ -959,6 +1131,60 @@ export default function App() {
             onChange={(e) => setPrompt(e.target.value)}
           />
         </div>
+
+        {confirmations.some(
+          (entry) =>
+            entry.candidates.length === 0 ||
+            entry.candidates.some((cand) => !dismissed.includes(cand.entity_id)),
+        ) && (
+          <div id="approval-pills" aria-live="polite">
+            {confirmations.flatMap((entry) =>
+              entry.candidates.length === 0
+                ? [
+                    <p key={`empty-${entry.text}`} className="approval-empty">
+                      No match for &ldquo;{entry.text}&rdquo; — try chips
+                    </p>,
+                  ]
+                : entry.candidates
+                    .filter((cand) => !dismissed.includes(cand.entity_id))
+                    .map((cand) => {
+                      const pct =
+                        typeof cand.confidence === "number" &&
+                        Number.isFinite(cand.confidence)
+                          ? Math.round(cand.confidence * 100)
+                          : null;
+                      return (
+                        <span
+                          key={cand.entity_id}
+                          className="approval-pill"
+                          data-confirmation-text={entry.text}
+                          data-confirmation-id={cand.entity_id}
+                        >
+                          <span className="approval-label">
+                            {pct === null
+                              ? `${cand.name} · match`
+                              : `${cand.name} · ${pct}% match`}
+                          </span>
+                          <button
+                            type="button"
+                            data-confirm="true"
+                            onClick={() => confirmCandidate(cand.entity_id)}
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            data-skip="true"
+                            onClick={() => skipCandidate(cand.entity_id)}
+                          >
+                            Skip
+                          </button>
+                        </span>
+                      );
+                    }),
+            )}
+          </div>
+        )}
 
         <div className="field">
           <h2 id="chips-heading">Taste chips</h2>
@@ -1128,6 +1354,35 @@ export default function App() {
         <div id="transplant-pane">
           <h2>Transplant</h2>
           <p id="transplant-summary">{reveal?.transplant.summary ?? ""}</p>
+          <div id="refinement-pills" role="group" aria-label="Refinements">
+            <button
+              type="button"
+              className={
+                refinements.includes("late-night")
+                  ? "refinement-pill refinement-pill-on"
+                  : "refinement-pill"
+              }
+              data-refinement="late-night"
+              aria-pressed={refinements.includes("late-night")}
+              onClick={() => toggleRefinement("late-night")}
+            >
+              more late-night
+            </button>
+            <button
+              type="button"
+              className={
+                refinements.includes("cheaper")
+                  ? "refinement-pill refinement-pill-on"
+                  : "refinement-pill"
+              }
+              data-refinement="cheaper"
+              aria-pressed={refinements.includes("cheaper")}
+              onClick={() => toggleRefinement("cheaper")}
+            >
+              cheaper
+            </button>
+          </div>
+          <p id="notices">{notices.join(" ")}</p>
           {reveal && (
             <TransplantMap
               center={reveal.transplant.map_center}
