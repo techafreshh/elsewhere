@@ -17,6 +17,11 @@ def test_health_returns_mock_mode() -> None:
     assert body["model"] is True
 
 
+def test_health_wrong_method_returns_405() -> None:
+    response = client.post("/api/health")
+    assert response.status_code == 405
+
+
 def test_unknown_transplant_returns_404_not_405() -> None:
     response = client.post(
         "/api/transplant", content="{bad json", headers={"Content-Type": "application/json"}

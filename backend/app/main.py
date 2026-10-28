@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -17,8 +17,18 @@ def health() -> dict:
 
 @app.api_route("/api", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
 @app.api_route("/api/{_:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
-def api_fallback() -> JSONResponse:
-    """Unknown /api/* returns JSON 404 (never StaticFiles 405) until real endpoints land."""
+def api_fallback(request: Request) -> JSONResponse:
+    """Unknown /api/* returns JSON 404 (never StaticFiles 405) until real endpoints land.
+
+    A path matching a declared API route but with the wrong method returns 405
+    so GET-only routes (e.g. POST /api/health) keep their 405 semantics.
+    """
+    path = request.url.path
+    for route in app.routes:
+        route_path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if route_path == path and methods and request.method not in methods:
+            return JSONResponse(status_code=405, content={"detail": "Method Not Allowed"})
     return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
 
