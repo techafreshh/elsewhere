@@ -391,3 +391,87 @@ body {
   line-height: 1.4;
   opacity: 0.7;
 }
+
+.why-strip {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  padding: 0.75rem 0.9rem;
+  margin: 0.75rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.why-toggle {
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: bold;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--terracotta);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.why-toggle[aria-expanded="true"] {
+  background: var(--terracotta);
+  color: #fff;
+}
+
+.why-body {
+  border-top: 1px dashed var(--line);
+  padding-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.why-path {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.why-query {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  word-break: break-all;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  display: block;
+}
+
+.honesty-toggle {
+  font: inherit;
+  font-size: 0.85rem;
+  border: 1px solid var(--line);
+  background: #f9e8dd;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.honesty-line {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  opacity: 0.9;
+}
+
+.alert {
+  background: #fdf0e3;
+  border: 1px solid var(--terracotta);
+  border-left: 4px solid var(--terracotta);
+  border-radius: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}

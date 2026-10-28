@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 import uuid
 from statistics import median
 
@@ -304,9 +305,44 @@ def iter_transplant_events(seed_ids, city, refinements=None):
                 }
             )
         map_pins = [{"latlng": card["latlng"], "card_index": i} for i, card in enumerate(cards)]
+        try:
+            _valid = _agent._valid_signals_for_insights(signals) if hasattr(_agent, "_valid_signals_for_insights") else (signals or None)
+            _params = _agent.build_insights_params(city_display, _valid, take=8, refinements=refs)
+            qloo_query = urllib.parse.urlencode(_params)
+        except Exception:
+            qloo_query = (
+                "filter.type=urn:entity:place&filter.location.query="
+                + urllib.parse.quote(city_display, safe="")
+                + "&feature.explainability=true&take=8"
+            )
+        taste_path_sentence = ""
+        try:
+            _first_path = cards[0].get("taste_path") if cards else None
+            if isinstance(_first_path, list):
+                _cleaned = [str(p) for p in _first_path if isinstance(p, str) and p]
+                if _cleaned:
+                    taste_path_sentence = " \u2192 ".join(_cleaned)
+        except Exception:
+            taste_path_sentence = ""
+        if not taste_path_sentence:
+            try:
+                _head = [str(entry) for entry in (labels or []) if isinstance(entry, str) and str(entry).strip()][:2]
+                _tail = str(cards[0].get("name", city_display)) if cards else city_display
+                taste_path_sentence = " \u2192 ".join(_head + [_tail]) if _head else f"{city_display} \u2192 your crowd \u2192 {_tail}"
+            except Exception:
+                taste_path_sentence = f"{city_display} \u2192 your crowd \u2192 {city_display}"
+        try:
+            model_slug = _agent._model_slug()
+        except Exception:
+            model_slug = "deepseek/deepseek-v4.1-flash"
+        why_qloo = {
+            "taste_path_sentence": taste_path_sentence,
+            "qloo_query": qloo_query,
+            "model": model_slug,
+        }
         yield sse_encode(
             state_delta(
-                {"cards": cards, "pins": map_pins, "map_pins": map_pins, "map_center": center},
+                {"cards": cards, "pins": map_pins, "map_pins": map_pins, "map_center": center, "broadened": broadened, "qloo_query": qloo_query, "taste_path_sentence": taste_path_sentence, "model": model_slug, "why_qloo": why_qloo},
                 thread_id,
                 run_id,
             )
@@ -408,6 +444,10 @@ def iter_transplant_events(seed_ids, city, refinements=None):
                     "transplant_summary": transplant_summary,
                     "city": city_display,
                     "broadened": broadened,
+                    "qloo_query": qloo_query,
+                    "taste_path_sentence": taste_path_sentence,
+                    "model": model_slug,
+                    "why_qloo": why_qloo,
                 },
                 thread_id,
                 run_id,

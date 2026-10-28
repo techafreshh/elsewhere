@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.parse
 from pathlib import Path
 from statistics import median
 
@@ -746,6 +747,37 @@ def build_payload(
     applied = refinement_filters(refs)
     applied_refinements = normalized_refinements(refs)
     notices = refinement_notices(refs, broadened=broadened)
+    try:
+        qloo_params = build_insights_params(city_display, valid, take=8, refinements=refs)
+        qloo_query = urllib.parse.urlencode(qloo_params)
+    except Exception:
+        qloo_query = (
+            "filter.type=urn:entity:place&filter.location.query="
+            + urllib.parse.quote(city_display, safe="")
+            + "&feature.explainability=true&take=8"
+        )
+    taste_path_sentence = ""
+    try:
+        first_path = cards[0].get("taste_path") if cards else None
+        if isinstance(first_path, list):
+            cleaned = [str(p) for p in first_path if isinstance(p, str) and p]
+            if cleaned:
+                taste_path_sentence = " \u2192 ".join(cleaned)
+    except Exception:
+        taste_path_sentence = ""
+    if not taste_path_sentence:
+        try:
+            head = [str(label) for label in (labels or []) if isinstance(label, str) and str(label).strip()][:2]
+            tail = str(cards[0].get("name", city_display)) if cards else city_display
+            taste_path_sentence = " \u2192 ".join(head + [tail]) if head else f"{city_display} \u2192 your crowd \u2192 {tail}"
+        except Exception:
+            taste_path_sentence = f"{city_display} \u2192 your crowd \u2192 {city_display}"
+    model_slug = _model_slug()
+    why_qloo = {
+        "taste_path_sentence": taste_path_sentence,
+        "qloo_query": qloo_query,
+        "model": model_slug,
+    }
     envelope: dict = {
         "tourist": {
             "summary": tourist_summary,
@@ -764,6 +796,7 @@ def build_payload(
         },
         "confirmations": confirmations,
         "notices": notices,
+        "why_qloo": why_qloo,
         "meta": {
             "model": _model_slug(),
             "cache_hit": False,
@@ -795,10 +828,24 @@ def run_transplant(seed_ids: object, city: str, refinements: list[str] | None = 
         try:
             return build_payload([], [], [str(city)], city, refinements, None)
         except Exception:
+            city_display = city.strip() if isinstance(city, str) and city.strip() else "London"
+            try:
+                fallback_query = urllib.parse.urlencode(build_insights_params(city_display, None, take=8))
+            except Exception:
+                fallback_query = (
+                    "filter.type=urn:entity:place&filter.location.query="
+                    + urllib.parse.quote(city_display, safe="")
+                    + "&feature.explainability=true&take=8"
+                )
             return {
                 "tourist": {"summary": "Tourist take.", "items": []},
                 "transplant": {"summary": "Transplant.", "cards": [], "brands": [], "map_center": [51.5074, -0.1278], "map_pins": []},
                 "confirmations": [],
-                "notices": [],
+                "notices": ["broadened search to fill results"],
+                "why_qloo": {
+                    "taste_path_sentence": f"{city_display} \u2192 your crowd \u2192 {city_display}",
+                    "qloo_query": fallback_query,
+                    "model": _model_slug(),
+                },
                 "meta": {"model": _model_slug(), "cache_hit": False, "broadened": True, "qloo_mode": _qloo_mode(), "applied_refinements": [], "applied_filters": {}},
             }
