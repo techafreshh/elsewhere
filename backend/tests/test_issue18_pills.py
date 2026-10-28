@@ -58,6 +58,25 @@ def test_free_text_confirmations_shape(monkeypatch, tmp_path) -> None:
     assert len(body["transplant"]["cards"]) == 5
 
 
+def test_frontend_onsubmit_mixed_seeds_shape(monkeypatch, tmp_path) -> None:
+    """Mixed chip-plus-`{text}` body (exactly what `onSubmit` sends) resolves."""
+    _isolated(monkeypatch, tmp_path)
+    response = client.post(
+        "/api/transplant",
+        json={
+            "seeds": ["urn:entity:artist:asake", {"text": "slow-burn Nollywood"}],
+            "dest_city": "London",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    confirmations = body["confirmations"]
+    assert len(confirmations) == 1
+    assert confirmations[0]["text"] == "slow-burn Nollywood"
+    assert confirmations[0]["candidates"], "dict-form text must surface candidates"
+    assert len(body["transplant"]["cards"]) == 5
+
+
 def test_refinement_echo_notices_and_five_cards(monkeypatch, tmp_path) -> None:
     """`refinements: [\"late-night\"]` echoes, notices, and keeps 5 cards."""
     _isolated(monkeypatch, tmp_path)

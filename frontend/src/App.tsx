@@ -273,6 +273,42 @@ const FALLBACK_BRANDS: string[] = [
 
 type StatusPath = "idle" | "sse" | "json" | "template";
 
+/** Wire seed: chip URNs travel as bare strings; typed prompt free text
+ *  travels as `{text: ...}` so backend `parse_seeds` routes it to
+ *  `resolve_text_seed` (bare strings are classified as chips and never
+ *  yield `confirmations`). */
+type Seed = string | { text: string };
+
+/** Dedupe a mixed seed list: strings by trimmed value, `{text}` objects
+ *  by folded text. Drops empties and anything else. Never throws. */
+function dedupeSeeds(rawSeeds: unknown): Seed[] {
+  try {
+    if (!Array.isArray(rawSeeds)) return [];
+    const seen = new Set<string>();
+    const out: Seed[] = [];
+    for (const seed of rawSeeds) {
+      if (typeof seed === "string") {
+        const trimmed = seed.trim();
+        if (!trimmed || seen.has(trimmed)) continue;
+        seen.add(trimmed);
+        out.push(trimmed);
+      } else if (seed && typeof seed === "object") {
+        const text = (seed as Record<string, unknown>).text;
+        if (typeof text !== "string") continue;
+        const trimmed = text.trim();
+        if (!trimmed) continue;
+        const key = `text:${trimmed}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ text: trimmed });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /** Hero London seed URNs from backend/data/seed_pairs.json — the submit
  *  fallback when no chips are picked so the hero pair works with the API down. */
 const HERO_LONDON_SEEDS: string[] = [
@@ -559,7 +595,7 @@ export default function App() {
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [refinements, setRefinements] = useState<string[]>([]);
   const [notices, setNotices] = useState<string[]>([]);
-  const lastSeedsRef = useRef<string[]>([]);
+  const lastSeedsRef = useRef<Seed[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [activities, setActivities] = useState<AguiActivity[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -635,7 +671,7 @@ export default function App() {
   // the JSON ladder. Never rejects and never surfaces a 500 — every path
   // ends in panes.
   const runSubmit = async (opts?: {
-    seeds?: string[];
+    seeds?: Seed[];
     refinements?: string[];
     preserveConfirmations?: boolean;
   }) => {
@@ -658,14 +694,8 @@ export default function App() {
     setRevealed(true);
     const destCity = city.trim() || DEFAULT_CITY;
     const rawSeeds = opts?.seeds ?? lastSeedsRef.current;
-    const deduped = [
-      ...new Set(
-        rawSeeds.filter(
-          (seed): seed is string => typeof seed === "string" && seed.trim().length > 0,
-        ),
-      ),
-    ];
-    const seeds = deduped.length > 0 ? deduped : HERO_LONDON_SEEDS;
+    const deduped = dedupeSeeds(rawSeeds);
+    const seeds: Seed[] = deduped.length > 0 ? deduped : HERO_LONDON_SEEDS;
     lastSeedsRef.current = seeds;
     const effRefs = opts?.refinements ?? refinements;
     const body = JSON.stringify({ seeds, dest_city: destCity, refinements: effRefs });
@@ -893,16 +923,17 @@ export default function App() {
     setSubmitting(false);
   };
 
-  // Hero Transplant button: prompt free text joins the seed set (deduped)
-  // so typed tastes reach resolve_seeds; refinements reset for the fresh
-  // search. The existing saveTaste effect persists prompt unchanged.
+  // Hero Transplant button: prompt free text joins the seed set as a
+  // `{text}` object (deduped) so typed tastes reach `resolve_text_seed`
+  // and come back as `confirmations`; bare strings would classify as
+  // chips and yield none. Refinements reset for the fresh search.
+  // The existing saveTaste effect persists prompt unchanged.
   const onSubmit = async () => {
     const text = prompt.trim();
-    const seeds = [
-      ...new Set(
-        [...selected, ...(text ? [text] : [])].filter((seed) => seed.trim().length > 0),
-      ),
-    ];
+    const seeds: Seed[] = dedupeSeeds([
+      ...selected,
+      ...(text ? [{ text }] : []),
+    ]);
     setRefinements([]);
     await runSubmit({ seeds, refinements: [] });
   };
