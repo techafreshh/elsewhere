@@ -6,6 +6,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend.app.catalog import get_catalog, get_seed_pairs
+
 app = FastAPI(title="ELSEWHERE")
 
 
@@ -13,6 +15,18 @@ app = FastAPI(title="ELSEWHERE")
 def health() -> dict:
     """Mock-mode liveness probe. No env reads, no outbound calls."""
     return {"status": "ok", "mode": "mock", "qloo": True, "model": True}
+
+
+@app.get("/api/catalog")
+def catalog() -> dict:
+    """Chip catalog grouped by category + city list, from JSON on disk."""
+    return get_catalog()
+
+
+@app.get("/api/seed_pairs")
+def seed_pairs() -> list:
+    """The 4 frozen demo seed pairs, from JSON on disk."""
+    return get_seed_pairs()
 
 
 @app.api_route("/api", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
