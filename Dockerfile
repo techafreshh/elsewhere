@@ -1,3 +1,6 @@
+# ELSEWHERE single-service API image (mock-mode default: no QLOO_API_KEY needed).
+# Serves the committed frontend/dist SPA via backend/app/main.py StaticFiles;
+# live keys only ever come from untracked .env (see .env.example, .dockerignore).
 FROM python:3.11-slim
 
 WORKDIR /app

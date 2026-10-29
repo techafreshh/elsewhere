@@ -5,7 +5,7 @@ from pathlib import Path
 from statistics import median
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 try:
@@ -338,3 +338,15 @@ def api_fallback(request: Request) -> JSONResponse:
 DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if DIST_DIR.is_dir():
     app.mount("/", StaticFiles(directory=DIST_DIR, html=True), name="spa")
+
+
+@app.get("/", include_in_schema=False)
+def root_fallback() -> HTMLResponse:
+    """200 SPA placeholder when DIST_DIR is absent (image without dist)."""
+    index = DIST_DIR / "index.html"
+    if index.is_file():
+        return HTMLResponse(index.read_text(encoding="utf-8", errors="replace"))
+    return HTMLResponse(
+        "<!doctype html><html><head><title>ELSEWHERE</title></head>"
+        "<body><h1>ELSEWHERE</h1></body></html>"
+    )
