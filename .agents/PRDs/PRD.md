@@ -11,7 +11,7 @@ ELSEWHERE (*"Feel at home, elsewhere."*) is a taste-transplant agent for people 
 
 The product's centerpiece is an honest, side-by-side reveal. One screen shows **Tourist mode** (what a generic LLM says with the same words) next to **Transplant mode** (what the Qloo-grounded agent finds with the same words *plus* taste-graph signals). The same LLM writes both pane summaries — the honesty toggle shows the model slug to preempt "did you rig it?". A "Why Qloo won" strip exposes the cross-domain taste path the generic side couldn't see: *Asake → late-night Afrobeats crowds → this specific market rooftop*.
 
-Built for the Qloo Agentic Hackathon, ELSEWHERE is a genuine agentic tool speaking **AG-UI 1.0**, the open agent↔UI protocol: the transplant loop (resolve → signal → recommend → explain) streams as standard agent events over SSE — every Qloo tool call visible — with CopilotKit + generative UI on the frontend rendering the reveal as the agent works. **MVP goal:** a publicly-hosted, judge-ready demo where tapping 4 taste chips and picking London produces a 5-card map transplant in <10s (cached) / <30s (cold), working even with the Qloo key removed via a server-side warmed cache — live through Nov 5 judging.
+Built for the Qloo Agentic Hackathon, ELSEWHERE is a genuine agentic tool speaking **AG-UI 1.0**, the open agent↔UI protocol: the transplant loop (resolve → signal → recommend → explain) streams as standard agent events over SSE — every Qloo tool call visible — with a hand-rolled state-driven render on the frontend showing the reveal as the agent works (CopilotKit Tier 2 planned, not adopted). **MVP goal:** a publicly-hosted, judge-ready demo where tapping 4 taste chips and picking London produces a 5-card map transplant in <10s (cached) / <30s (cold), working even with the Qloo key removed via a server-side warmed cache — live through Nov 5 judging.
 
 ## 2. Mission
 
@@ -59,9 +59,9 @@ Built for the Qloo Agentic Hackathon, ELSEWHERE is a genuine agentic tool speaki
 **Integration**
 - [x] Qloo hackathon API (`https://hackathon.api.qloo.com`, `X-Api-Key` header, GET insights)
 - [x] OpenRouter (`deepseek/deepseek-v4.1-flash`, one model for both panes)
-- [x] beUI component kit (motion / blocks / agents categories) via shadcn CLI
-- [x] **AG-UI 1.0 agent endpoint (Tier 1, committed):** FastAPI streams the transplant loop as AG-UI events over SSE — `TOOL_CALL_*` for `qloo_search` / `qloo_insights_place` / `qloo_insights_brand` / `summarize_panes`, `STATE_SNAPSHOT`/`STATE_DELTA` driving the reveal. Agent loop becomes protocol-visible for judges
-- [x] **CopilotKit + generative UI (Tier 2, additive):** `@copilotkit/react-core` headless — register our endpoint as an `HttpAgent`, bind reveal to `useCoAgent` state, render cards/pins progressively via `useCopilotAction` renderers. Adopt only if it drops in cleanly (runtime container acceptable in compose); `@ag-ui/client` alone satisfies Tier 1
+- [ ] beUI component kit (planned, not adopted — as-built: hand-rolled custom components styled with custom CSS + `motion/react` animations; no `components.json`, no `@/components/ui`)
+- [x] **AG-UI 1.0 agent endpoint (Tier 1, committed):** FastAPI streams the transplant loop as AG-UI events over SSE — `TOOL_CALL_*` for `qloo_search` / `qloo_insights_place` / `qloo_insights_brand` / `summarize_panes`, `STATE_SNAPSHOT`/`STATE_DELTA` driving the reveal. Agent loop becomes protocol-visible for judges. Frontend consumes SSE via hand-rolled `streamAgui` client in `frontend/src/agui.ts`, permitted by §14 Tier-1 wording
+- [ ] **CopilotKit + generative UI (Tier 2, not adopted):** Tier-1 state-driven render ships instead — no `@copilotkit/react-core`, no `HttpAgent`/`useCoAgent` binding; reveal renders from hand-rolled SSE consumer state
 
 **Deployment**
 - [x] Dockerfile + docker-compose.yml + Caddyfile for the user's VPS
@@ -101,7 +101,7 @@ Built for the Qloo Agentic Hackathon, ELSEWHERE is a genuine agentic tool speaki
 Single service. FastAPI serves the built SPA and proxies Qloo — the browser never sees the key.
 
 ```
-Browser (React SPA, beUI + CopilotKit headless / @ag-ui/client)
+Browser (React SPA, hand-rolled custom components + hand-rolled SSE consumer)
    │  POST /agui (SSE: AG-UI events)      POST /api/transplant (fallback, cache mode)
    ▼
 FastAPI ──► agent.py  ──► qloo.py ──► hackathon.api.qloo.com  (X-Api-Key header)
@@ -116,7 +116,7 @@ FastAPI ──► agent.py  ──► qloo.py ──► hackathon.api.qloo.com  
 
 **Key patterns**
 - **Agent loop as protocol, not vibes:** one agent implementation (`agent.py`), two transports — a generator of AG-UI events (`POST /agui`, SSE) and the plain `POST /api/transplant` JSON response. The UI prefers streaming; the JSON endpoint is the demo-safe fallback and what cache/seed mode serves.
-- **Generative UI:** the reveal is rendered *from agent state*, progressively — chips resolve as `qloo_search` returns, pins drop on the Leaflet map as `qloo_insights_place` streams in, panes fill when `summarize_panes` completes.
+- **Generative UI (as-built: hand-rolled state-driven render, Tier 2 not adopted):** the reveal is rendered *from agent state*, progressively — chips resolve as `qloo_search` returns, pins drop on the Leaflet map as `qloo_insights_place` streams in, panes fill when `summarize_panes` completes.
 - **Mock-first:** `qloo.py` returns hand-written synthetic fixtures (committed; clearly ours, not Qloo data) when `QLOO_API_KEY` is missing — identical response shapes, so the key is a config flip, not a code change.
 - **Cache-first:** every transplant result is cached by a hash of (sorted seed IDs + city + refinements). Seeded pairs are pre-warmed on the server. Cache directory is gitignored — **no Qloo response data is ever committed**.
 - **Fallback ladder:** empty Qloo results → drop audience signals → drop tag signals → drop weakest seed → report "broadened search" in the response payload.
@@ -134,7 +134,7 @@ elsewhere/
 │   └── tests/
 ├── frontend/
 │   └── src/{App,promptbox,reveal,panes,map,cards,whystrip}.tsx
-│   └── src/components/                           # beUI-installed (shadcn CLI)
+│   └── src/components/                           # hand-rolled custom components (no beUI install)
 ├── Dockerfile  docker-compose.yml  Caddyfile
 ├── .env.example  README.md  LICENSE (MIT)
 └── data/cache/                                   # gitignored; warmed on server
@@ -152,26 +152,28 @@ elsewhere/
 | Explain | Affinity multipliers, taste-path chains, why-you lines | Missing tags → summary-only card |
 | Summarize | Two DeepSeek calls (tourist prompt = raw words; transplant prompt = words + Qloo evidence); JSON: summary + per-card why-you | Template copy fallback |
 
-### 7.2 Frontend — every component from beUI (beui.dev)
-| UI element | beUI component |
+### 7.2 Frontend — hand-rolled components (beUI planned, not adopted)
+| UI element | As-built component (custom unless noted) |
 |---|---|
-| Prompt box (hero) | `agents/prompt-input` (model selector shows the honesty state; animated send/stop) |
-| Taste chips / card tokens | `motion/multi-select` (grouped Music/Food/Screens/Vibes, removable animated tokens, localStorage) |
-| City picker | `motion/combobox` (preseeded cities + free search) |
-| Free-text confirmation pills | `agents/approval-card` |
-| Agent visibility while waiting | `agents/agent-activity` + `agents/loading-states` — fed by real AG-UI tool-call events, not fake timers |
-| Generative UI (progressive reveal) | `useCopilotAction` renderers (Tier 2) / state-driven render (Tier 1): cards + map pins appear as Qloo tool calls resolve |
-| Transplant cards | `motion/card` |
-| Affinity badge | `motion/animated-badge` + `motion/number` (count-up) |
-| Entity-chain link ("why you") | `agents/citations` (seed → tag → spot) |
-| "Why Qloo won" strip | `motion/collapsible` + `agents/tool-result` (query disclosure, params only) |
-| Refinement pills | `blocks/overflow-actions` |
-| Honesty toggle | `motion/switch` + `motion/tooltip` |
-| Notices ("broadened search") | `motion/alert` |
-| Loading | `motion/loader` |
-| Wordmark | `motion/text-animation` |
+| Prompt box (hero) | hand-rolled custom prompt input (as-built: hand-rolled custom, not beUI; honesty state shown inline, animated send/stop) |
+| Taste chips / card tokens | hand-rolled custom chip tray (as-built: hand-rolled custom, not beUI `motion/multi-select`; grouped Music/Food/Screens/Vibes, removable animated tokens, localStorage) |
+| City picker | hand-rolled custom city picker (as-built: hand-rolled custom, not beUI `motion/combobox`; preseeded cities + free search) |
+| Free-text confirmation pills | hand-rolled custom approval pills (as-built: hand-rolled custom, not beUI `agents/approval-card`) |
+| Agent visibility while waiting | hand-rolled custom agent-activity view (as-built: hand-rolled custom, not beUI `agents/agent-activity` + `agents/loading-states` — fed by real AG-UI tool-call events, not fake timers) |
+| Generative UI (progressive reveal) | hand-rolled state-driven render (as-built: hand-rolled custom, not beUI; Tier 2 CopilotKit `useCopilotAction` renderers not adopted): cards + map pins appear as Qloo tool calls resolve |
+| Transplant cards | hand-rolled custom cards (as-built: hand-rolled custom, not beUI `motion/card`) |
+| Affinity badge | hand-rolled custom badge with count-up (as-built: hand-rolled custom, not beUI `motion/animated-badge` + `motion/number`) |
+| Entity-chain link ("why you") | hand-rolled custom citation chain (as-built: hand-rolled custom, not beUI `agents/citations`; seed → tag → spot) |
+| "Why Qloo won" strip | hand-rolled custom collapsible + tool-result view (as-built: hand-rolled custom, not beUI `motion/collapsible` + `agents/tool-result`; query disclosure, params only) |
+| Refinement pills | hand-rolled custom overflow actions (as-built: hand-rolled custom, not beUI `blocks/overflow-actions`) |
+| Honesty toggle | hand-rolled custom switch + tooltip (as-built: hand-rolled custom, not beUI `motion/switch` + `motion/tooltip`) |
+| Notices ("broadened search") | hand-rolled custom alert (as-built: hand-rolled custom, not beUI `motion/alert`) |
+| Loading | hand-rolled custom loader (as-built: hand-rolled custom, not beUI `motion/loader`) |
+| Wordmark | hand-rolled custom wordmark (as-built: hand-rolled custom, not beUI `motion/text-animation`) |
 | Tourist pane list | deliberately plain styled rows (generic **by design**) |
 | Map | Leaflet (custom; theme-styled warm pins — no beUI map exists) |
+
+**As-built frontend note:** the shipped frontend is hand-rolled custom components (custom CSS + `motion` animation library + Leaflet + `lucide-react` + `clsx`/`tailwind-merge`) — beUI was planned but not adopted (no `components.json`, no `@/components/ui`, no `npx shadcn add @beui/<slug>` install). The two legitimately-custom elements stay custom as planned: the Leaflet map and the deliberately-plain tourist rows. Tier-1 AG-UI 1.0 SSE is consumed by the hand-rolled `streamAgui` tolerant-normalizer client in `frontend/src/agui.ts` (never-throw, skip-malformed, per `backend/tests/test_agui.py` `_collect_events` split-on-`data:` framing); Tier-2 CopilotKit was not adopted. DOM contracts (`#transplant-submit`, `.affinity-badge`, approval-pill attributes, `.transplant-card[data-index]`, `#why-qloo-body`, honesty line) are frozen.
 
 ### 7.3 Qloo API facts (load-bearing — implement exactly)
 - Base URL `https://hackathon.api.qloo.com` (staging/prod 401). Auth: `X-Api-Key` header only. `/v2/insights` is **GET with query string**; always append a path. Never `/recommendations`.
@@ -188,9 +190,9 @@ elsewhere/
 | Store | JSON files (config) + JSON-file cache | SQLite unnecessary at this scale; cache dir gitignored |
 | LLM | OpenRouter — `deepseek/deepseek-v4.1-flash` | One model, both panes; `OPENROUTER_MODEL` env-swappable |
 | Frontend | Vite + React + TypeScript, Tailwind CSS v4 | shadcn-style CSS-variable theming (warm editorial: cream `#F7F3EC`, ink, terracotta) |
-| Components | **beUI** (`motion`, `blocks`, `agents`) via `npx shadcn add @beui/<slug>` | Deps: `motion`, `lucide-react`, `clsx`, `tailwind-merge` |
-| Agent protocol | **AG-UI 1.0** over SSE — backend emits events (hand-rolled ~10 event types, or official Python SDK if it installs cleanly); frontend consumes via `@ag-ui/client` | Tier 2 adds `@copilotkit/react-core` (headless hooks; optional `@copilotkit/runtime` Node container in compose) |
-| Map | Leaflet (+ theme-styled tiles, warm pins) | Only custom UI element |
+| Components | hand-rolled custom components (custom CSS + `motion` animation library + `lucide-react` + `clsx`/`tailwind-merge`) — beUI planned, not adopted (no `components.json`, no `@/components/ui`) | No beUI install; `motion` here is the generic animation library, not a beUI component |
+| Agent protocol | **AG-UI 1.0** over SSE — backend emits hand-rolled ~10 event types; frontend consumes via hand-rolled `streamAgui` client in `frontend/src/agui.ts` (Tier-1 wording per §14) | Tier 2 (`@copilotkit/react-core`, `@ag-ui/client`) not adopted |
+| Map | Leaflet (+ theme-styled tiles, warm pins) | Custom UI element alongside the deliberately-plain tourist rows; both stay custom as planned |
 | Tests | pytest (backend) | Frontend: build + manual/browser e2e |
 | Deploy | Docker + docker-compose + Caddy on user's VPS | Public HTTPS URL through Nov 5 |
 
@@ -280,9 +282,9 @@ Errors stream as `RUN_ERROR`; the UI falls back to `POST /api/transplant`. The Q
 - [ ] **Ship a CI workflow** (`.github/workflows/ci.yml`) running backend pytest + frontend build on every PR — delivered with the scaffold so the merge gate engages from lap 2
 - [ ] `qloo.py` client + mock fixtures; `catalog` (chips/cities/seed pairs as config with placeholder IDs)
 - [ ] Transplant agent, cache, summarizer (stubbed LLM if OpenRouter unverified) + pytest green
-- [ ] `agui.py`: AG-UI 1.0 event endpoint (SSE) wrapping the same agent loop; `@ag-ui/client` consumer; agent-activity fed by real events
-- [ ] Frontend: beUI install + theming; prompt box, chip tray, city combobox, two panes, Leaflet map, badges, citations, Why-Qloo-won strip, refinements, honesty toggle
-- **Validation:** hero scenario fully clickable in mock mode; `npm run build` + `pytest` green; all UI elements from beUI.
+- [ ] `agui.py`: AG-UI 1.0 event endpoint (SSE) wrapping the same agent loop; hand-rolled `streamAgui` consumer in `frontend/src/agui.ts`; agent-activity fed by real events
+- [ ] Frontend: hand-rolled custom components + theming (beUI planned, not adopted); prompt box, chip tray, city picker, two panes, Leaflet map, badges, citation chains, Why-Qloo-won strip, refinements, honesty toggle
+- **Validation:** hero scenario fully clickable in mock mode; `npm run build` + `pytest` green; all UI elements hand-rolled; beUI not installed (no `components.json`).
 
 ### Phase 2 — Live wiring (the hour the key lands, Oct 29)
 **Goal:** real Qloo data end-to-end.
@@ -290,7 +292,7 @@ Errors stream as `RUN_ERROR`; the UI falls back to `POST /api/transplant`. The Q
 - [ ] Verify `/v2/insights` params live (location query, explainability, brand call)
 - [ ] `scripts/seed_cache.py`: warm all 4 seeded pairs on the VPS; timing check (<10s cached)
 - [ ] OpenRouter live check (DeepSeek both panes); template fallback verified
-- [ ] Tier 2 (only if Tier 1 landed early): CopilotKit headless layer + generative-UI renderers for progressive card/pin reveal
+- [ ] Tier 2 (CopilotKit headless layer + generative-UI renderers for progressive card/pin reveal): not adopted — Tier-1 state-driven render ships instead
 - **Validation:** hero pair on live data; fallback ladder exercised; key-removed drill passes.
 
 ### Phase 3 — Deploy + submit (Oct 30)
@@ -322,14 +324,14 @@ Errors stream as `RUN_ERROR`; the UI falls back to `POST /api/transplant`. The Q
 | **Quota/rate limits during judging** | 429s on the live demo | Generous hackathon quotas + #api-help bump path; all demo traffic absorbed by cache |
 | **LLM outage/slow (OpenRouter)** | Panes empty or slow | Template-copy fallback; <30s budget with timeout; both panes degrade gracefully |
 | **Deploy slips / VPS issues** | No public URL = disqualified | Repo ships Dockerfile+Caddyfile so any host works in minutes; fallback: workers.dev static + tiny proxy first, VPS second |
-| **AG-UI/CopilotKit integration friction** | Lost time in a 3-day window | Tier 1 hand-rolls ~10 SSE event types (protocol is simple JSON) — no SDK dependency; `@ag-ui/client` optional; CopilotKit is Tier 2 only; non-streaming JSON endpoint stays as fallback |
+| **AG-UI/CopilotKit integration friction** | Lost time in a 3-day window | Tier 1 hand-rolls ~10 SSE event types (protocol is simple JSON) — no SDK dependency; `@ag-ui/client` optional (not installed; hand-rolled `streamAgui` ships instead); CopilotKit is Tier 2 only (not adopted); non-streaming JSON endpoint stays as fallback |
 
 ## 15. Appendix
 
 **Key dependencies & links**
 - Qloo dev guide: https://docs.qloo.com/reference/qloo-llm-hackathon-developer-guide · Parameter reference: https://docs.qloo.com/reference/parameters · Insights deep dive: https://docs.qloo.com/reference/insights-api-deep-dive
 - Hackathon kit: https://github.com/qloo/qloo-hackathon-kit · Event: https://qloo.devpost.com/ · Discord #api-help: https://discord.gg/rF9PKsD5Q7 · Contact: ian@qloo.com
-- beUI: https://beui.dev/components/motion · /components/blocks · /components/agents
+- beUI (planned, not adopted — reference only): https://beui.dev/components/motion · /components/blocks · /components/agents
 - AG-UI 1.0 spec: https://docs.ag-ui.com/introduction · CopilotKit: https://github.com/copilotkit/copilotkit · Generative UI guide: https://www.copilotkit.ai/blog/the-developer-s-guide-to-generative-ui-in-2026
 - OpenRouter: https://openrouter.ai
 
