@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import urllib.error
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from statistics import median
 
@@ -39,6 +41,9 @@ _ORIG_SEARCH = _qloo_module.qloo_search
 _ORIG_SUMMARIZE = _summarizer_module.summarize_panes
 
 DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash"
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_DEFAULT_TIMEOUT = 15
 
 # Refinement keywords steering a re-run without restarting the session.
 # Single source of truth for refinement -> Qloo insight filter mapping.
@@ -144,6 +149,119 @@ _FALLBACK_CENTERS = {
 def _model_slug() -> str:
     """Model slug, read at call time so env changes apply without restart."""
     return os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL)
+
+
+def _extractor_timeout_seconds() -> float:
+    """Per-call OpenRouter timeout, read at call time via OPENROUTER_TIMEOUT."""
+    try:
+        return float(os.environ.get("OPENROUTER_TIMEOUT", OPENROUTER_DEFAULT_TIMEOUT))
+    except (TypeError, ValueError):
+        return float(OPENROUTER_DEFAULT_TIMEOUT)
+
+
+def _extractor_messages(text: str) -> list[dict]:
+    """Prompt asking for a bare JSON array of short taste names."""
+    phrase = text.strip() if isinstance(text, str) else ""
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Extract candidate taste names from the user's free-text phrase. "
+                "Reply with ONLY a bare JSON array of short taste names, "
+                'e.g. ["Nollywood", "quiet rooftops"]. No prose, no numbering.'
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Extract taste names from: {phrase}",
+        },
+    ]
+
+
+def _parse_candidate_list(content: object) -> list[str] | None:
+    """Parse a ``[...]`` JSON list of non-empty strings; None when unusable."""
+    if not isinstance(content, str) or not content.strip():
+        return None
+    text = content.strip()
+    start = text.find("[")
+    end = text.rfind("]")
+    if start < 0 or end <= start:
+        return None
+    try:
+        parsed = json.loads(text[start : end + 1])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, list):
+        return None
+    names: list[str] = []
+    for item in parsed:
+        if isinstance(item, str) and item.strip():
+            names.append(item.strip())
+        if len(names) >= 3:
+            break
+    return names or None
+
+
+def extract_taste_candidates(text: str) -> list[str] | None:
+    """Extract up to 3 candidate taste names via the OpenRouter chat model.
+
+    Same model/timeout rules as the pane summarizer. Returns ``None`` when
+    ``OPENROUTER_API_KEY`` is absent, the text is blank, the call times
+    out, the status is non-200, or the reply has no parseable ``[...]``
+    of non-empty strings. Never raises.
+    """
+    try:
+        if not isinstance(text, str) or not text.strip():
+            return None
+        key = os.environ.get("OPENROUTER_API_KEY")
+        if not key:
+            return None
+        body = json.dumps(
+            {
+                "model": _model_slug(),
+                "messages": _extractor_messages(text.strip()),
+                "max_tokens": 100,
+                "temperature": 0,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            OPENROUTER_URL,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=_extractor_timeout_seconds()) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                return None
+            payload = json.loads(response.read().decode("utf-8"))
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        if not choices:
+            return None
+        message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+        content = message.get("content", "")
+        if isinstance(content, list):  # some providers return content blocks
+            content = "".join(
+                block.get("text", "") for block in content if isinstance(block, dict)
+            )
+        return _parse_candidate_list(content)
+    except (
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+        TimeoutError,
+        ValueError,
+        KeyError,
+        IndexError,
+        AttributeError,
+        TypeError,
+        OSError,
+    ):
+        return None
+    except Exception:
+        return None
 
 
 def _qloo_mode() -> str:
@@ -367,15 +485,15 @@ def parse_seeds(raw_seeds: object) -> tuple[list[str], list[str]]:
     return chips, texts
 
 
-def resolve_text_seed(text: str) -> list[dict]:
-    """Resolve one free-text query to confirmable candidates.
+def _search_one_candidate(query: str) -> list[dict]:
+    """Run one ``qloo_search`` query through staging plus relevance filter.
 
-    Exactly one ``qloo_search`` call; any failure or irrelevance
-    yields ``[]`` (unresolved, never raised).
+    Exactly one ``_search_fn()`` call; any failure or irrelevance
+    yields ``[]``, never raises.
     """
-    if not isinstance(text, str) or not text.strip():
+    if not isinstance(query, str) or not query.strip():
         return []
-    query = text.strip()
+    query = query.strip()
     try:
         results = _search_fn()(query)
     except Exception:
@@ -428,6 +546,46 @@ def resolve_text_seed(text: str) -> list[dict]:
     return kept
 
 
+def resolve_text_seed(text: str) -> list[dict]:
+    """Resolve one free-text query to confirmable candidates.
+
+    When ``OPENROUTER_API_KEY`` is configured, the phrase is first split
+    into up to 3 candidate taste names and each costs one ``qloo_search``
+    call (merged in order, deduped by ``entity_id``). Without a key, or
+    when extraction fails or yields nothing, falls back to exactly one
+    raw-phrase search. Any failure yields ``[]`` (unresolved, never raised).
+    """
+    if not isinstance(text, str) or not text.strip():
+        return []
+    query = text.strip()
+    candidates: list[str] | None = None
+    try:
+        candidates = extract_taste_candidates(query)
+    except Exception:
+        candidates = None
+    if not candidates:
+        return _search_one_candidate(query)
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for candidate_query in candidates[:3]:
+        if not isinstance(candidate_query, str) or not candidate_query.strip():
+            continue
+        try:
+            hits = _search_one_candidate(candidate_query.strip())
+        except Exception:
+            continue
+        for hit in hits:
+            try:
+                entity_id = str(hit.get("entity_id", ""))
+            except Exception:
+                continue
+            if not entity_id or entity_id in seen:
+                continue
+            seen.add(entity_id)
+            merged.append(hit)
+    return merged
+
+
 def build_note(unresolved: list[str] | None) -> str | None:
     """Visible note for dropped texts; None when everything resolved."""
     if not unresolved:
@@ -453,7 +611,8 @@ def resolve_seeds(seed_ids: object) -> tuple[list[str], list[dict], list[str]]:
     Returns ``(signals, confirmations, labels)``. Unresolvable text is
     dropped with empty candidates, never raised. Chip seeds (strings or
     ``id``/``entity_id``/``urn`` dicts) pass through with zero network;
-    each ``text`` seed costs at most one ``qloo_search`` call.
+    each ``text`` seed costs at most one ``qloo_search`` call without a key,
+    or up to three (one per extracted candidate) when the LLM extractor runs.
     """
     chips, texts = parse_seeds(seed_ids)
     signals: list[str] = list(chips)
