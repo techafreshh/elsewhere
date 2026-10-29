@@ -1,11 +1,54 @@
 @import "tailwindcss";
 
+/* beUI shadcn tokens mapped onto the warm editorial palette: cream
+ * background, ink foreground, terracotta primary. Unlayered author CSS
+ * below keeps winning over utilities, so legacy selectors hold while
+ * beUI components read these tokens. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
 :root {
-  --background: #f7f3ec;
+  --background: #F7F3EC;
+  --foreground: #1a1a1a;
+  --card: #fffdf8;
+  --card-foreground: #1a1a1a;
+  --popover: #fffdf8;
+  --popover-foreground: #1a1a1a;
+  --primary: #c96f4a;
+  --primary-foreground: #fffdf8;
+  --secondary: #efe4d2;
+  --secondary-foreground: #1a1a1a;
+  --muted: #efe4d2;
+  --muted-foreground: #6f6257;
+  --accent: #f9e8dd;
+  --accent-foreground: #1a1a1a;
+  --destructive: #b3261e;
+  --border: #e4d9c8;
+  --border-strong: #c9b896;
+  --input: #e4d9c8;
+  --ring: #c96f4a;
   --ink: #1a1a1a;
   --terracotta: #c96f4a;
   --line: #e4d9c8;
-  --card: #fffdf8;
 }
 
 html,
@@ -435,10 +478,10 @@ body {
   font-family: Georgia, serif;
 }
 
-/* Warm terracotta number pins; Leaflet adds .leaflet-marker-icon itself. */
+/* Warm terracotta number pins via theme tokens; Leaflet adds .leaflet-marker-icon itself. */
 .warm-pin {
-  background: #c96f4a;
-  border: 2px solid #fffdf8;
+  background: var(--terracotta);
+  border: 2px solid var(--card);
   border-radius: 999px;
   box-shadow: 0 1px 6px rgba(26, 26, 26, 0.35);
   color: #fffdf8;
@@ -644,4 +687,95 @@ body {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--terracotta);
+}
+
+/* ---- beUI adoption layer (issue #53) ----
+ * beUI components render inside the legacy selectors above; these rules keep
+ * the warm editorial look and the frozen DOM contracts while beUI owns the
+ * behavior. Unlayered rules win over Tailwind utilities by construction. */
+
+/* Multi-select chips: beUI option buttons keep the pill look; the span
+ * wrapper carries data-entity-id / data-selected / aria-pressed. */
+#chips .chip {
+  width: auto;
+}
+.chip-group [data-entity-id] {
+  display: inline-flex;
+}
+
+/* Multi-select tokens: beUI value root keeps the token hook class. */
+#selected-tokens .token {
+  max-width: 100%;
+}
+
+/* City combobox: beUI input lives in the legacy field; search icon stays. */
+.combobox-field .city-beui {
+  font: inherit;
+}
+
+/* Approval pills: the beUI card is transparent so the pill reads as before. */
+/* Approval pills: the beUI card is transparent so the pill reads as before.
+ * ApprovalCard always renders its own footer Approve button; the pills use
+ * contract Confirm/Skip controls instead, so hide the unused beUI button. */
+.approval-pill > .approval-beui {
+  background: transparent;
+  padding: 0;
+  width: auto;
+}
+.approval-beui button:not([data-confirm]):not([data-skip]) {
+  display: none;
+}
+.approval-actions {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+/* Transplant cards: article keeps the contract attrs; beUI Card owns visuals. */
+.transplant-card-beui {
+  padding: 0.75rem 0.9rem;
+  gap: 0.4rem;
+  border: none;
+  background: transparent;
+}
+
+/* Affinity badge: beUI pill themed terracotta, count-up inside. */
+.affinity-badge {
+  border: 1px solid transparent;
+}
+
+/* Taste-path citations list under the chain line. */
+.taste-cites {
+  margin: 0.4rem 0 0;
+}
+
+/* Why-Qloo strip: beUI collapsible root keeps the strip layout. */
+.why-strip {
+  width: 100%;
+}
+.why-toggle {
+  width: auto;
+  align-self: flex-start;
+}
+
+/* Refinement pills: beUI overflow-action buttons; on-state via :has since the
+ * contract attrs ride the inner label span. Empty overflow toggle is hidden. */
+.refinement-overflow-toggle {
+  display: none;
+}
+#refinement-pills button:has([data-refinement][aria-pressed="true"]) {
+  background: var(--terracotta);
+  border-color: var(--terracotta);
+  color: #fff;
+}
+
+/* Honesty switch row. */
+.honesty-wrap {
+  display: inline-flex;
+  align-self: flex-start;
+  margin-top: 0.25rem;
+}
+
+/* Agent-activity beUI feed sits above the contract rows. */
+.agent-activity-beui {
+  margin: 0.25rem 0 0.5rem;
 }

@@ -1,6 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { motion } from "motion/react";
+import { TextReveal } from "@/components/motion/text-reveal";
+import { PromptInput } from "@/components/agents/prompt-input";
+import {
+  MultiSelect,
+  MultiSelectItem,
+  MultiSelectValue,
+} from "@/components/motion/multi-select";
+import { useMultiSelectContext } from "@/components/motion/multi-select/context";
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxItem,
+} from "@/components/motion/combobox";
+import { ApprovalCard } from "@/components/agents/approval-card";
+import { AgentActivity } from "@/components/agents/agent-activity";
+import { ThinkingShimmer } from "@/components/agents/loading-states/thinking-shimmer";
+import { Card } from "@/components/motion/card";
+import { CitationList } from "@/components/agents/citations";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/motion/collapsible";
+import {
+  ToolResult,
+  ToolResultOutput,
+} from "@/components/agents/tool-result";
+import { OverflowActions } from "@/components/motion/overflow-actions";
+import { Switch } from "@/components/motion/switch";
+import { Tooltip } from "@/components/motion/tooltip";
+import { Alert, AlertContent, AlertIcon } from "@/components/motion/alert";
+import { Loader } from "@/components/motion/loader";
 import AffinityBadge from "./AffinityBadge.tsx";
 import TransplantMap from "./TransplantMap.tsx";
 import { streamAgui, type AguiActivity, type AguiEvent } from "./agui.ts";
@@ -610,6 +642,33 @@ function toSnapshotPayload(
   }
 }
 
+/** Removable taste token label rendered inside beUI MultiSelectValue: carries
+ *  the `data-token-remove` contract attribute on the clickable element itself
+ *  and removes through the beUI multi-select state. Never throws. */
+function TokenLabel({ value, label }: { value: string; label: string }) {
+  const { remove } = useMultiSelectContext("TokenLabel");
+  return (
+    <span
+      data-token-remove={value}
+      role="button"
+      tabIndex={0}
+      aria-label={`Remove ${label}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        remove(value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          remove(value);
+        }
+      }}
+    >
+      {label} <span aria-hidden="true">×</span>
+    </span>
+  );
+}
+
 export default function App() {
   const [initial] = useState(loadTaste);
   const [chips, setChips] = useState<Chip[]>(FALLBACK_CHIPS);
@@ -697,14 +756,6 @@ export default function App() {
     },
     [],
   );
-
-  const toggleChip = (entityId: string) => {
-    setSelected((prev) =>
-      prev.includes(entityId)
-        ? prev.filter((entry) => entry !== entityId)
-        : [...prev, entityId],
-    );
-  };
 
   // Parameterised submit core: Tier-1 state-driven POST /agui SSE stream
   // (3s optimistic abort while idle, 25s once frames flow), then the POST
@@ -1093,13 +1144,6 @@ export default function App() {
     setCityOpen(true);
   };
 
-  const onCityChange = (value: string) => {
-    queryRef.current = value;
-    setCityQuery(value);
-    setHighlight(-1);
-    setCityOpen(true);
-  };
-
   const chooseCity = (value: string) => {
     const next = value.trim();
     if (next) setCity(next);
@@ -1159,13 +1203,14 @@ export default function App() {
   };
 
   // Closed combobox shows the chosen city; an open one shows the live query.
-  const cityValue = cityOpen ? cityQuery : city;
   const visibleCities = cityOpen ? filteredCities : cities;
 
   return (
     <main className="hero-shell">
       <header className="hero-header">
-        <h1>ELSEWHERE</h1>
+        <h1>
+          <TextReveal text="ELSEWHERE" />
+        </h1>
         <p>Feel at home, elsewhere.</p>
       </header>
 
@@ -1185,12 +1230,14 @@ export default function App() {
       <section id="hero" aria-label="Transplant your taste">
         <div className="field">
           <label htmlFor="prompt-input">What does home feel like?</label>
-          <input
+          <PromptInput
             id="prompt-input"
-            type="text"
-            placeholder="What does home feel like? e.g. Asake, owambe parties, 2am shawarma"
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onValueChange={setPrompt}
+            onSubmit={() => void onSubmit()}
+            loading={submitting}
+            placeholder="What does home feel like? e.g. Asake, owambe parties, 2am shawarma"
+            aria-label="What does home feel like?"
           />
         </div>
 
@@ -1222,25 +1269,32 @@ export default function App() {
                           data-confirmation-text={entry.text}
                           data-confirmation-id={cand.entity_id}
                         >
-                          <span className="approval-label">
-                            {pct === null
-                              ? `${cand.name} · match`
-                              : `${cand.name} · ${pct}% match`}
-                          </span>
-                          <button
-                            type="button"
-                            data-confirm="true"
-                            onClick={() => confirmCandidate(cand.entity_id)}
+                          <ApprovalCard
+                            title={cand.name}
+                            description={
+                              pct === null
+                                ? `${cand.name} · match`
+                                : `${cand.name} · ${pct}% match`
+                            }
+                            className="approval-beui"
                           >
-                            Confirm
-                          </button>
-                          <button
-                            type="button"
-                            data-skip="true"
-                            onClick={() => skipCandidate(cand.entity_id)}
-                          >
-                            Skip
-                          </button>
+                            <span className="approval-actions">
+                              <button
+                                type="button"
+                                data-confirm="true"
+                                onClick={() => confirmCandidate(cand.entity_id)}
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                data-skip="true"
+                                onClick={() => skipCandidate(cand.entity_id)}
+                              >
+                                Skip
+                              </button>
+                            </span>
+                          </ApprovalCard>
                         </span>
                       );
                     }),
@@ -1248,6 +1302,7 @@ export default function App() {
           </div>
         )}
 
+        <MultiSelect value={selected} onValueChange={setSelected}>
         <div className="field">
           <h2 id="chips-heading">Taste chips</h2>
           <p className="hint">Tap 3–5 tastes that feel like home.</p>
@@ -1256,18 +1311,11 @@ export default function App() {
               <span className="tokens-empty">No tastes picked yet.</span>
             ) : (
               <>
-                {selectedChips.map((chip) => (
-                  <button
-                    key={chip.entity_id}
-                    type="button"
-                    data-token-remove={chip.entity_id}
-                    aria-label={`Remove ${chip.label}`}
-                    className="token"
-                    onClick={() => toggleChip(chip.entity_id)}
-                  >
-                    {chip.label} <span aria-hidden="true">×</span>
-                  </button>
-                ))}
+                <MultiSelectValue chipClassName="token">
+                  {(value, label) => (
+                    <TokenLabel value={value} label={label} />
+                  )}
+                </MultiSelectValue>
                 <button
                   type="button"
                   className="tokens-clear"
@@ -1290,18 +1338,21 @@ export default function App() {
                   {group.items.map((chip) => {
                     const isOn = selected.includes(chip.entity_id);
                     return (
-                      <motion.button
+                      <span
                         key={chip.entity_id}
-                        type="button"
                         data-entity-id={chip.entity_id}
                         data-selected={isOn ? "true" : "false"}
                         aria-pressed={isOn}
-                        className={isOn ? "chip chip-on" : "chip"}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={() => toggleChip(chip.entity_id)}
                       >
-                        {chip.label}
-                      </motion.button>
+                        <MultiSelectItem
+                          value={chip.entity_id}
+                          textValue={chip.label}
+                          keywords={[chip.category]}
+                          className={isOn ? "chip chip-on" : "chip"}
+                        >
+                          {chip.label}
+                        </MultiSelectItem>
+                      </span>
                     );
                   })}
                 </div>
@@ -1309,24 +1360,70 @@ export default function App() {
             ))}
           </div>
         </div>
+        </MultiSelect>
 
+        <Combobox
+          open={cityOpen}
+          onOpenChange={(next) => {
+            if (next) {
+              setCityOpen(true);
+              return;
+            }
+            // Mirror the blur-commit: a typed value left in the box becomes
+            // the city. Reads the pre-clear render value because the provider
+            // clears its query (scheduled) just before this fires.
+            const pending = cityQuery.trim();
+            if (pending) setCity(pending);
+            queryRef.current = "";
+            setCityQuery("");
+            setCityOpen(false);
+            setHighlight(-1);
+          }}
+          query={cityQuery}
+          onQueryChange={(next) => {
+            queryRef.current = next;
+            setCityQuery(next);
+            setHighlight(-1);
+          }}
+          value={city}
+          onValueChange={(next) => chooseCity(next)}
+        >
         <div className="field combobox-field">
           <label htmlFor="city-input">City</label>
-          <input
+          <ComboboxInput
             id="city-input"
-            type="text"
-            role="combobox"
-            aria-expanded={cityOpen}
-            aria-controls="city-list"
-            aria-autocomplete="list"
+            ref={(el) => {
+              // ComboboxInput stamps its own generated id/aria-controls after
+              // the props spread, so restore the frozen contract attributes
+              // (label htmlFor + combobox semantics point at #city-list).
+              if (el) {
+                el.id = "city-input";
+                el.setAttribute("aria-controls", "city-list");
+              }
+            }}
+            aria-label="City"
             autoComplete="off"
             placeholder="Pick a city… e.g. London"
-            value={cityValue}
             onFocus={openCityList}
-            onChange={(e) => onCityChange(e.target.value)}
             onBlur={onCityBlur}
             onKeyDown={onCityKeyDown}
+            className="city-beui"
           />
+          {/* Hidden option registrations so the closed input shows the city
+              label; the visible list below stays custom for free search.
+              The current city gets its own registration when free-typed. */}
+          <span aria-hidden="true" hidden>
+            {cities.map((name) => (
+              <ComboboxItem key={name} value={name} textValue={name}>
+                {name}
+              </ComboboxItem>
+            ))}
+            {city && !cities.includes(city) && (
+              <ComboboxItem key={city} value={city} textValue={city}>
+                {city}
+              </ComboboxItem>
+            )}
+          </span>
           <ul
             id="city-list"
             role="listbox"
@@ -1368,6 +1465,7 @@ export default function App() {
             )}
           </ul>
         </div>
+        </Combobox>
 
         {seedPairs.length > 0 && (
           <div id="seed-pairs" role="group" aria-label="Seeded pairs">
@@ -1393,7 +1491,14 @@ export default function App() {
             onClick={onSubmit}
             disabled={submitting}
           >
-            {submitting ? "Transplanting\u2026" : "Transplant me"}
+            {submitting ? (
+              <>
+                <Loader variant="dots" size={16} label="Transplanting" />
+                {"Transplanting\u2026"}
+              </>
+            ) : (
+              "Transplant me"
+            )}
           </button>
           <p id="transplant-status" role="status" data-status={statusPath}>
             {STATUS_COPY[statusPath]}
@@ -1406,6 +1511,22 @@ export default function App() {
           <p className="agent-activity-head">
             Agent activity{streaming ? " · live" : ""}
           </p>
+          <AgentActivity
+            items={activities.map((activity) => ({
+              id: activity.toolCallId,
+              type: "tool",
+              action: "run",
+              target: activity.toolCallName,
+            }))}
+            status={streaming ? "working" : "complete"}
+            contentType="tool"
+            collapseOnComplete={false}
+            activeLabel="Running transplant tools…"
+            className="agent-activity-beui"
+          />
+          {streaming && activities.length === 0 && (
+            <ThinkingShimmer>Contacting the transplant agent…</ThinkingShimmer>
+          )}
           {activities.map((activity) => (
             <div
               key={activity.toolCallId}
@@ -1434,32 +1555,36 @@ export default function App() {
           <h2>Transplant</h2>
           <p id="transplant-summary">{reveal?.transplant.summary ?? ""}</p>
           <div id="refinement-pills" role="group" aria-label="Refinements">
-            <button
-              type="button"
-              className={
-                refinements.includes("late-night")
-                  ? "refinement-pill refinement-pill-on"
-                  : "refinement-pill"
-              }
-              data-refinement="late-night"
-              aria-pressed={refinements.includes("late-night")}
-              onClick={() => toggleRefinement("late-night")}
-            >
-              more late-night
-            </button>
-            <button
-              type="button"
-              className={
-                refinements.includes("cheaper")
-                  ? "refinement-pill refinement-pill-on"
-                  : "refinement-pill"
-              }
-              data-refinement="cheaper"
-              aria-pressed={refinements.includes("cheaper")}
-              onClick={() => toggleRefinement("cheaper")}
-            >
-              cheaper
-            </button>
+            <OverflowActions
+              primaryActions={[
+                {
+                  id: "late-night",
+                  label: (
+                    <span
+                      data-refinement="late-night"
+                      aria-pressed={refinements.includes("late-night")}
+                    >
+                      more late-night
+                    </span>
+                  ),
+                  onClick: () => toggleRefinement("late-night"),
+                },
+                {
+                  id: "cheaper",
+                  label: (
+                    <span
+                      data-refinement="cheaper"
+                      aria-pressed={refinements.includes("cheaper")}
+                    >
+                      cheaper
+                    </span>
+                  ),
+                  onClick: () => toggleRefinement("cheaper"),
+                },
+              ]}
+              overflowActions={[]}
+              classNames={{ toggle: "refinement-overflow-toggle" }}
+            />
           </div>
           <p id="notices">{notices.join(" ")}</p>
           {reveal && (
@@ -1478,95 +1603,101 @@ export default function App() {
             ))}
           </div>
           {reveal && (
-            <div className="why-strip">
-              <button
-                type="button"
-                className="why-toggle"
-                aria-expanded={whyOpen}
-                aria-controls="why-qloo-body"
-                onClick={() => setWhyOpen((v) => !v)}
-              >
+            <Collapsible open={whyOpen} onOpenChange={setWhyOpen} className="why-strip">
+              <CollapsibleTrigger className="why-toggle">
                 Why Qloo won
-              </button>
+              </CollapsibleTrigger>
               {whyOpen && (
-                <motion.div
-                  id="why-qloo-body"
-                  className="why-body"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <p className="why-path">
-                    {(reveal.whyQloo?.pathSentence ||
-                      (reveal.transplant.cards[0]?.taste_path ?? []).filter(
-                        (entry): entry is string => typeof entry === "string" && entry.length > 0,
-                      ).join(" \u2192 ") ||
-                      `${city.trim() || DEFAULT_CITY} \u2192 your crowd \u2192 ${(reveal.transplant.cards[0]?.name || city.trim() || DEFAULT_CITY)}`)}
-                  </p>
-                  <code className="why-query">
-                    {(reveal.whyQloo?.query ||
-                      `filter.type=urn:entity:place&filter.location.query=${encodeURIComponent(city.trim() || DEFAULT_CITY)}&feature.explainability=true&take=8`)}
-                  </code>
-                </motion.div>
+                <CollapsibleContent>
+                  <div id="why-qloo-body" className="why-body">
+                    <p className="why-path">
+                      {(reveal.whyQloo?.pathSentence ||
+                        (reveal.transplant.cards[0]?.taste_path ?? []).filter(
+                          (entry): entry is string => typeof entry === "string" && entry.length > 0,
+                        ).join(" \u2192 ") ||
+                        `${city.trim() || DEFAULT_CITY} \u2192 your crowd \u2192 ${(reveal.transplant.cards[0]?.name || city.trim() || DEFAULT_CITY)}`)}
+                    </p>
+                    <ToolResult
+                      tool="qloo/v2/insights"
+                      title="Qloo query"
+                      status="success"
+                      kind="request"
+                      contentClassName="why-query"
+                    >
+                      <ToolResultOutput language="text">
+                        {(reveal.whyQloo?.query ||
+                          `filter.type=urn:entity:place&filter.location.query=${encodeURIComponent(city.trim() || DEFAULT_CITY)}&feature.explainability=true&take=8`)}
+                      </ToolResultOutput>
+                    </ToolResult>
+                  </div>
+                </CollapsibleContent>
               )}
-              <button
-                type="button"
-                role="switch"
-                aria-checked={honestyOn}
-                className="honesty-toggle"
-                title="Reveal that both panes share one model"
-                onClick={() => setHonestyOn((v) => !v)}
-              >
-                honesty check: same model?
-              </button>
+              <Tooltip content="Reveal that both panes share one model">
+                <span className="honesty-wrap">
+                  <Switch
+                    checked={honestyOn}
+                    onCheckedChange={setHonestyOn}
+                    label="honesty check: same model?"
+                  />
+                </span>
+              </Tooltip>
               {honestyOn && (
                 <p className="honesty-line">both panes: {reveal.model ?? DEFAULT_MODEL}</p>
               )}
               {!!reveal.broadened && (
-                <div className="alert" role="alert">broadened search to fill results</div>
+                <Alert variant="warning" role="alert" className="alert">
+                  <AlertIcon />
+                  <AlertContent>broadened search to fill results</AlertContent>
+                </Alert>
               )}
-            </div>
+            </Collapsible>
           )}
           <div className="transplant-grid">
-            {(reveal?.transplant.cards ?? []).slice(0, 5).map((card, index) => (
-              <article
-                key={`${index}-${card.entity_id || card.name}`}
-                className={
-                  highlighted === index
-                    ? "transplant-card card--highlight"
-                    : "transplant-card"
-                }
-                data-index={index}
-                data-highlighted={highlighted === index ? "true" : "false"}
-                data-entity-id={card.entity_id || `urn:entity:place:card-${index}`}
-              >
-                <h3>{card.name}</h3>
-                <AffinityBadge value={card.affinity_multiplier ?? 1.0} />
-                <p className="why-you">{card.why_you ?? card.whyYou ?? ""}</p>
-                <p
-                  className="taste-path"
-                  aria-label={(card.taste_path ?? [])
-                    .filter(
-                      (entry): entry is string =>
-                        typeof entry === "string" && entry.length > 0,
-                    )
-                    .join(" \u2192 ")}
+            {(reveal?.transplant.cards ?? []).slice(0, 5).map((card, index) => {
+              const chain = (card.taste_path ?? []).filter(
+                (entry): entry is string =>
+                  typeof entry === "string" && entry.length > 0,
+              );
+              const chainText = chain.join(" \u2192 ");
+              return (
+                <article
+                  key={`${index}-${card.entity_id || card.name}`}
+                  className={
+                    highlighted === index
+                      ? "transplant-card card--highlight"
+                      : "transplant-card"
+                  }
+                  data-index={index}
+                  data-highlighted={highlighted === index ? "true" : "false"}
+                  data-entity-id={card.entity_id || `urn:entity:place:card-${index}`}
                 >
-                  {(card.taste_path ?? [])
-                    .filter(
-                      (entry): entry is string =>
-                        typeof entry === "string" && entry.length > 0,
-                    )
-                    .join(" \u2192 ")}
-                </p>
-                <p
-                  className="entity-id"
-                  data-testid="entity-id"
-                >
-                  {card.entity_id || `urn:entity:place:card-${index}`}
-                </p>
-              </article>
-            ))}
+                  <Card className="transplant-card-beui">
+                    <h3>{card.name}</h3>
+                    <AffinityBadge value={card.affinity_multiplier ?? 1.0} />
+                    <p className="why-you">{card.why_you ?? card.whyYou ?? ""}</p>
+                    <p className="taste-path" aria-label={chainText}>
+                      {chainText}
+                    </p>
+                    {chain.length > 0 && (
+                      <CitationList
+                        citations={chain.map((part, partIndex) => ({
+                          id: `${card.entity_id || `card-${index}`}-${partIndex}`,
+                          title: part,
+                        }))}
+                        idPrefix={`taste-${index}`}
+                        className="taste-cites"
+                      />
+                    )}
+                    <p
+                      className="entity-id"
+                      data-testid="entity-id"
+                    >
+                      {card.entity_id || `urn:entity:place:card-${index}`}
+                    </p>
+                  </Card>
+                </article>
+              );
+            })}
           </div>
         </div>
       </section>
