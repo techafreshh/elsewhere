@@ -101,6 +101,8 @@ def test_reveal_ids_in_served_bundle() -> None:
         "tourist-row",
         "transplant-card",
         "data-entity-id",
+        "entity-id",
+        "urn:entity:place:card-",
     ):
         assert anchor in bundle, anchor
 

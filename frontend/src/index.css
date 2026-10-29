@@ -482,6 +482,16 @@ body {
   font-size: 1rem;
 }
 
+.transplant-card .entity-id {
+  margin: 0.35rem 0 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .why-you {
   margin: 0;
   font-size: 0.92rem;
