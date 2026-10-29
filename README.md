@@ -29,6 +29,10 @@ The same LLM writes both pane summaries. The difference is the evidence — and 
 6. Warm the demo cache: `python backend/scripts/seed_cache.py`
 7. Run the tests: `python -m pytest backend/tests -q`
 
+**Notes**
+- Your taste card (picked chips, city, prompt) **persists in your browser's localStorage** (`elsewhere.taste.v1`) and is restored — and auto-replanted — on every reload. To start fresh, clear that key in DevTools (Application → Local Storage) or tap the chip tray's Clear button.
+- No keys? Everything runs in **mock mode** against committed synthetic fixtures. With `QLOO_API_KEY` in `.env`, the same code paths go live; chip IDs are real Qloo entities (resolved once via `backend/scripts/resolve_chips.py`, operator-run with the key).
+
 ## License
 
 [MIT](LICENSE)

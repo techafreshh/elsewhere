@@ -214,7 +214,9 @@ def iter_transplant_events(seed_ids, city, refinements=None):
                 continue
             if _agent._is_urn(text):
                 signals.append(text)
-                labels.append(_agent._short_label(text))
+                label = _agent._label_for_seed(text)
+                if label:
+                    labels.append(label)
                 continue
             labels.append(text)
             call_id = _new_tool_id()
@@ -240,7 +242,7 @@ def iter_transplant_events(seed_ids, city, refinements=None):
                 entity_id = item.get("entity_id") or item.get("id")
                 if not name or not entity_id:
                     continue
-                if not isinstance(entity_id, str) or not entity_id.startswith("urn:entity:"):
+                if not _agent.is_entity_id(entity_id):
                     continue
                 raw_conf = item.get("confidence", item.get("match_confidence", 0.9))
                 try:
@@ -286,12 +288,16 @@ def iter_transplant_events(seed_ids, city, refinements=None):
         except (ValueError, TypeError):
             mid = 1.0
         center = list(_agent._FALLBACK_CENTERS.get(city_display.strip().lower(), [51.5074, -0.1278]))
-        seed_hint = labels[0] if labels else city_display
+        seed_hint = next(
+            (l for l in (labels or []) if isinstance(l, str) and l.strip()),
+            city_display,
+        )
         cards: list[dict] = []
         for index, entity in enumerate(picked):
             name = str(entity.get("name", ""))
             tags = entity.get("tags") if isinstance(entity.get("tags"), list) else []
-            tag_hint = str(tags[0]).replace("-", " ") if tags else (refs[0] if refs else "your crowd")
+            tag_hint = _agent._tag_label(tags[0]) if tags else (refs[0] if refs else "your crowd")
+            tag_hint = tag_hint or (refs[0] if refs else "your crowd")
             latlng = [round(center[0] + 0.01 * index, 4), round(center[1] + 0.012 * index, 4)]
             cards.append(
                 {
@@ -319,8 +325,12 @@ def iter_transplant_events(seed_ids, city, refinements=None):
         try:
             _first_path = cards[0].get("taste_path") if cards else None
             if isinstance(_first_path, list):
-                _cleaned = [str(p) for p in _first_path if isinstance(p, str) and p]
-                if _cleaned:
+                # Drop raw entity IDs (bare UUIDs leak via seed_hint fallbacks).
+                _cleaned = [
+                    str(p) for p in _first_path
+                    if isinstance(p, str) and p.strip() and not _agent.is_entity_id(p.strip())
+                ]
+                if len(_cleaned) >= 2:
                     taste_path_sentence = " \u2192 ".join(_cleaned)
         except Exception:
             taste_path_sentence = ""

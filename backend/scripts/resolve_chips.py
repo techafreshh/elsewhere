@@ -30,11 +30,11 @@ if str(_REPO_ROOT) not in sys.path:
 try:
     from backend.app import qloo as _qloo_module
     from backend.app.agent import _is_hit_relevant
-    from backend.app.qloo import qloo_search
+    from backend.app.qloo import is_entity_id, qloo_search
 except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
     from app import qloo as _qloo_module
     from app.agent import _is_hit_relevant
-    from app.qloo import qloo_search
+    from app.qloo import is_entity_id, qloo_search
 
 _ORIG_SEARCH = _qloo_module.qloo_search
 
@@ -47,6 +47,16 @@ TASTE_TS_MARKER = "FALLBACK_CHIPS"
 TASTE_TS_PAIR_MARKER = "FALLBACK_SEED_PAIRS"
 APP_TSX_MARKER = "HERO_LONDON_SEEDS"
 
+# Chip category -> Qloo type substrings a resolution should prefer, so a
+# "Nollywood slow-burns" chip resolves to a movie, not the first textually
+# relevant book or band.
+CATEGORY_TYPES: dict[str, tuple[str, ...]] = {
+    "Music": ("artist", "music"),
+    "Food": ("place", "brand", "cuisine", "food", "restaurant"),
+    "Screens": ("movie", "tv", "media"),
+    "Vibes": ("tag", "place", "locality", "audience", "brand"),
+}
+
 
 def _search_fn():
     """Search callable, honoring monkeypatches on this module or qloo."""
@@ -56,26 +66,43 @@ def _search_fn():
     return _qloo_module.qloo_search
 
 
-def pick_best_hit(label: str, hits: object) -> str | None:
-    """First ``urn:entity:`` hit (of at most 3) relevant to the label."""
+def pick_best_hit(
+    label: str, hits: object, prefer_types: tuple[str, ...] = ()
+) -> str | None:
+    """Best ``urn:entity:``/UUID hit (of at most 8) relevant to the label.
+
+    When ``prefer_types`` is given, the first relevant hit whose ``types``
+    contain one of the substrings wins even if a textually-relevant hit of
+    another type ranked higher; otherwise the first relevant hit wins.
+    """
     if not isinstance(hits, list):
         return None
-    for hit in hits[:3]:
+    fallback: str | None = None
+    for hit in hits[:8]:
         if not isinstance(hit, dict):
             continue
         try:
             entity_id = hit.get("entity_id") or hit.get("id")
         except Exception:
             continue
-        if not isinstance(entity_id, str) or not entity_id.startswith("urn:entity:"):
+        if not is_entity_id(entity_id):
             continue
         try:
             relevant = _is_hit_relevant(label, hit)
         except Exception:
             relevant = False
-        if relevant:
+        if not relevant:
+            continue
+        if fallback is None:
+            fallback = entity_id
+        try:
+            types = hit.get("types") or []
+            type_text = " ".join(str(t) for t in types).lower()
+        except Exception:
+            type_text = ""
+        if prefer_types and any(p in type_text for p in prefer_types):
             return entity_id
-    return None
+    return fallback
 
 
 def _replace_in_block(text: str, marker: str, urn_map: dict[str, str]) -> str | None:
@@ -91,6 +118,26 @@ def _replace_in_block(text: str, marker: str, urn_map: dict[str, str]) -> str | 
     for old_urn, new_urn in urn_map.items():
         block = block.replace(old_urn, new_urn)
     return text[:start] + block + text[end:]
+
+
+def _urn_type_matches(hits: object, urn: str, prefer_types: tuple[str, ...]) -> bool:
+    """True when the hit carrying ``urn`` has a type in ``prefer_types``."""
+    for hit in hits or []:
+        if not isinstance(hit, dict):
+            continue
+        try:
+            hit_id = hit.get("entity_id") or hit.get("id")
+        except Exception:
+            continue
+        if hit_id != urn:
+            continue
+        try:
+            types = hit.get("types") or []
+            type_text = " ".join(str(t) for t in types).lower()
+        except Exception:
+            return False
+        return any(p in type_text for p in prefer_types)
+    return False
 
 
 def main() -> int:
@@ -138,20 +185,42 @@ def main() -> int:
         if isinstance(entity_id, str) and isinstance(label, str) and label.strip():
             old_to_label.setdefault(entity_id, label)
     labels: list[str] = []
+    label_category: dict[str, str] = {}
     for chip in chips:
         if not isinstance(chip, dict):
             continue
         label = chip.get("label")
         if isinstance(label, str) and label.strip() and label not in labels:
             labels.append(label)
+            category = chip.get("category")
+            if isinstance(category, str):
+                label_category[label] = category
     resolved: dict[str, str] = {}
     unresolved: list[str] = []
     for label in labels:
+        prefer = CATEGORY_TYPES.get(label_category.get(label, ""), ())
         try:
             hits = _search_fn()(label)
         except Exception:
             hits = None
-        urn = pick_best_hit(label, hits)
+        urn = pick_best_hit(label, hits, prefer_types=prefer)
+        if urn is not None and prefer and not _urn_type_matches(hits, urn, prefer):
+            # The label resolved, but to an off-category entity (e.g. the
+            # "Nollywood slow-burns" token "slow" matching a book). Retry the
+            # lead token — relevance is still checked against the full label,
+            # so only on-category hits for this taste can win the retry.
+            # A single-word label has no cheaper second query; skip it.
+            words = label.split()
+            short = words[0] if len(words) > 1 else label
+            if short != label:
+                try:
+                    more = _search_fn()(short)
+                except Exception:
+                    more = None
+                typed = pick_best_hit(label, more, prefer_types=prefer)
+                if typed is not None:
+                    urn = typed
+                    print(f"RETYPED {label} via {short!r}")
         if urn is None:
             unresolved.append(label)
             print(f"UNRESOLVED {label}")

@@ -25,6 +25,11 @@ except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
 
 client = TestClient(app)
 
+# Qloo IDs ship as bare UUIDs (live /search) or urn:entity:* URNs (mocks).
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -114,7 +119,12 @@ def test_reveal_fetch_paths_in_served_bundle() -> None:
     assert "/api/transplant" in bundle
     assert "localStorage" in bundle
     assert "elsewhere.taste" in bundle
-    assert bundle.count("urn:entity:") >= 12
+    # Chip IDs are bare UUIDs since the resolver's live rewrite (mock mode
+    # still uses urn:entity:* URNs); either shape satisfies the >=12 count.
+    assert (
+        len(_UUID_RE.findall(bundle)) >= 12
+        or bundle.count("urn:entity:") >= 12
+    )
 
 
 def test_agent_activity_and_stream_reader_in_served_bundle() -> None:

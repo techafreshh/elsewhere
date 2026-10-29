@@ -1,10 +1,20 @@
 """Catalog contract tests: chips shape, cities, seed pairs."""
 
+import re
+
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
 
 client = TestClient(app)
+
+# Qloo IDs arrive as urn:entity:* URNs (mock fixtures) or bare UUIDs
+# (live /search results, as committed to chips.json) — both are valid.
+_UUID_RE = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+
+
+def _is_entity_id(value: str) -> bool:
+    return value.startswith("urn:entity:") or bool(re.fullmatch(_UUID_RE, value))
 
 
 def test_catalog_chips_shape() -> None:
@@ -15,7 +25,7 @@ def test_catalog_chips_shape() -> None:
     for chip in chips:
         assert chip["label"]
         assert chip["category"]
-        assert chip["entity_id"].startswith("urn:entity:")
+        assert _is_entity_id(chip["entity_id"])
 
 
 def test_catalog_cities() -> None:

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -91,16 +92,33 @@ def _require_take(take: object) -> int:
     return take
 
 
+# Live Qloo IDs arrive as bare UUIDs (search hits and insights results both)
+# while mock fixtures and older docs use urn:entity:* URNs. Both are accepted;
+# the hackathon API's signal.interests.entities only accepts the bare form
+# (URN forms 400 with "contains invalid entity ids").
+_BARE_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def is_entity_id(value: object) -> bool:
+    """True for a usable Qloo entity ID: urn:entity:* URN or bare UUID."""
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    return stripped.startswith("urn:entity:") or bool(_BARE_UUID_RE.match(stripped))
+
+
 def _require_entity_ids(entity_ids: object) -> list[str] | None:
     if entity_ids is None:
         return None
     if not isinstance(entity_ids, (list, tuple)) or not entity_ids:
-        raise ValueError("entity_ids must be a non-empty list of urn:entity:* IDs or None")
+        raise ValueError("entity_ids must be a non-empty list of entity IDs or None")
     cleaned: list[str] = []
     for entity_id in entity_ids:
-        if not isinstance(entity_id, str) or not entity_id.startswith("urn:entity:"):
-            raise ValueError(f"invalid entity_id (must start with 'urn:entity:'): {entity_id!r}")
-        cleaned.append(entity_id)
+        if not is_entity_id(entity_id):
+            raise ValueError(f"invalid entity_id (urn:entity:* or bare UUID): {entity_id!r}")
+        cleaned.append(entity_id.strip())
     return cleaned
 
 
@@ -199,8 +217,14 @@ def _insights_live(
         extra_filters=extra_filters, refinements=refinements,
     )
     payload = _live_get("/v2/insights", query_string)
-    if isinstance(payload, dict) and isinstance(payload.get("entities"), list):
-        return payload
+    if isinstance(payload, dict):
+        # Live envelope nests the array under results.entities; some older
+        # shapes carry it top-level. Accept both.
+        results = payload.get("results")
+        if isinstance(results, dict) and isinstance(results.get("entities"), list):
+            return {**payload, "entities": results["entities"]}
+        if isinstance(payload.get("entities"), list):
+            return payload
     entities = payload if isinstance(payload, list) else []
     return {"entities": entities}
 

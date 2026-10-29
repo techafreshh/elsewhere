@@ -14,6 +14,11 @@ from backend.app.main import app
 
 client = TestClient(app)
 
+# Qloo IDs ship as bare UUIDs (live /search) or urn:entity:* URNs (mocks).
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
+
 
 def _served_bundle_js() -> str:
     """Return the concatenated JS served for GET / (index.html + assets)."""
@@ -51,8 +56,10 @@ def test_hero_chip_tray_and_catalog() -> None:
     assert "data-token-remove" in bundle
     for category in ("Music", "Food", "Screens", "Vibes"):
         assert category in bundle
-    # Inlined fallback snapshot keeps >=12 chips without the API.
-    assert bundle.count("urn:entity:") >= 12
+    # Inlined fallback snapshot keeps >=12 chips without the API. Chip IDs
+    # are bare UUIDs since the resolver's live rewrite (urn:entity:* only in
+    # mock fixtures and tests); count UUID-shaped IDs in the bundle instead.
+    assert len(_UUID_RE.findall(bundle)) >= 12
     # Live catalog behind the same fetch the hero performs.
     response = client.get("/api/catalog")
     assert response.status_code == 200

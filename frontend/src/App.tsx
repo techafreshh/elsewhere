@@ -377,10 +377,10 @@ function dedupeSeeds(rawSeeds: unknown): Seed[] {
 /** Hero London seed URNs from backend/data/seed_pairs.json — the submit
  *  fallback when no chips are picked so the hero pair works with the API down. */
 const HERO_LONDON_SEEDS: string[] = [
-  "urn:entity:artist:asake",
-  "urn:entity:place:filmhouse-imax",
-  "urn:entity:brand:owambe-catering",
-  "urn:entity:brand:shawarma-2am",
+  "A80A473D-103A-4B71-8BFB-461D537B35EA",
+  "5DC6251A-9EC6-4D3A-8562-E0F8A5596CA2",
+  "6E524581-0ED4-49EF-8935-0CE390A82F92",
+  "8F8A810B-FDE6-4481-B344-D4F9D9623A8E",
 ];
 
 const DEFAULT_CITY = "London";

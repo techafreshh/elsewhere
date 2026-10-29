@@ -7,6 +7,7 @@ plus notice, SSE parity, and served-bundle anchors surviving minification.
 
 import json
 import re
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -25,6 +26,24 @@ client = TestClient(app)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SECRET_RE = re.compile(r"[A-Za-z0-9_\-]{20,}")
+# Real Qloo entity IDs are bare UUIDs; they are legitimate query content
+# (the disclosed signal.interests.entities list), not secret material —
+# so they are excluded from the secret-like token check.
+UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+
+def _secret_like_tokens(text: str) -> list[str]:
+    """20+ char tokens that are not real entity UUIDs."""
+    # Percent-encoded UUID lists (%2C separators) glue tokens together;
+    # decode percent-escapes first so UUID boundaries are exact.
+    decoded = urllib.parse.unquote(text)
+    return [
+        token
+        for token in SECRET_RE.findall(decoded)
+        if not UUID_RE.fullmatch(token)
+    ]
 
 
 def _isolated(monkeypatch, tmp_path):
@@ -79,8 +98,9 @@ def test_why_qloo_hero_london_disclosure(monkeypatch, tmp_path) -> None:
     assert "X-Api-Key" not in serialized
     for key in ("QLOO_API_KEY", "OPENROUTER_API_KEY"):
         assert key not in serialized
-    # No 20+ char secret-like token in the rendered query line.
-    assert SECRET_RE.search(query) is None, query
+    # No 20+ char secret-like token in the rendered query line (real entity
+    # UUIDs in the signal list are legitimate query content, not secrets).
+    assert _secret_like_tokens(query) == [], query
 
 
 def test_why_qloo_honesty_format(monkeypatch, tmp_path) -> None:
@@ -141,7 +161,7 @@ def test_why_qloo_agui_snapshot_parity(monkeypatch, tmp_path) -> None:
     assert "\u2192" in str(sentence)
     model = snapshot.get("model") or (snapshot.get("why_qloo") or {}).get("model", "")
     assert "deepseek/deepseek-v4.1-flash" in str(model)
-    assert SECRET_RE.search(str(query)) is None
+    assert _secret_like_tokens(str(query)) == []
 
 
 def _served_bundle_text() -> str:

@@ -67,8 +67,14 @@ app = FastAPI(title="ELSEWHERE")
 
 @app.get("/api/health")
 def health() -> dict:
-    """Mock-mode liveness probe. No env reads, no outbound calls."""
-    return {"status": "ok", "mode": "mock", "qloo": True, "model": True}
+    """Liveness probe. `mode` mirrors agent._qloo_mode() — live with a key,
+    mock without — read at call time so key removal degrades without a
+    restart. No outbound calls."""
+    try:
+        from app.agent import _qloo_mode  # served with backend/ on sys.path
+    except ModuleNotFoundError:  # repo-root invocation
+        from backend.app.agent import _qloo_mode
+    return {"status": "ok", "mode": _qloo_mode(), "qloo": True, "model": True}
 
 
 @app.get("/api/catalog")

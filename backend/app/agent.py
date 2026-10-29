@@ -34,6 +34,7 @@ qloo_insights_place = _qloo_module.qloo_insights_place
 qloo_insights_brand = _qloo_module.qloo_insights_brand
 qloo_search = _qloo_module.qloo_search
 summarize_panes = _summarizer_module.summarize_panes
+is_entity_id = _qloo_module.is_entity_id
 
 _ORIG_PLACE = _qloo_module.qloo_insights_place
 _ORIG_BRAND = _qloo_module.qloo_insights_brand
@@ -270,11 +271,48 @@ def _qloo_mode() -> str:
 
 
 def _short_label(seed_id: str) -> str:
+    # Bare UUIDs (the live /search shape) carry no name — never render them.
+    stripped = seed_id.strip()
+    if _qloo_module._BARE_UUID_RE.match(stripped):
+        return ""
     return seed_id.split(":")[-1].replace("-", " ").strip() or seed_id
 
 
+def _label_for_seed(seed_id: str) -> str:
+    """Human label for a chip seed: URN slug, else catalog label, else ''.
+
+    Bare UUIDs resolve through the chip catalog (Asake, 2am shawarma, …);
+    unknown IDs yield '' so callers skip the label rather than render one.
+    """
+    label = _short_label(seed_id)
+    if label:
+        return label
+    try:
+        try:
+            from backend.app.catalog import label_for_entity
+        except ModuleNotFoundError:  # served with backend/ on sys.path
+            from app.catalog import label_for_entity
+        return label_for_entity(seed_id.strip()) or ""
+    except Exception:
+        return ""
+
+
+def _tag_label(tag: object) -> str:
+    """Human label from a Qloo tag entry (dict on live, str on mock)."""
+    if isinstance(tag, dict):
+        for field in ("name", "label", "value"):
+            value = tag.get(field)
+            if isinstance(value, str) and value.strip():
+                return value.strip().replace("-", " ")
+        return ""
+    if isinstance(tag, str) and tag.strip():
+        return tag.strip().replace("-", " ")
+    return ""
+
+
 def _is_urn(value: object) -> bool:
-    return isinstance(value, str) and value.startswith("urn:entity:")
+    """Seed-classification gate: urn:entity:* URN or bare Qloo UUID."""
+    return is_entity_id(value)
 
 
 def _place_fn():
@@ -512,7 +550,7 @@ def _search_one_candidate(query: str) -> list[dict]:
         entity_id = item.get("entity_id") or item.get("id")
         if not name or not entity_id:
             continue
-        if not isinstance(entity_id, str) or not entity_id.startswith("urn:entity:"):
+        if not is_entity_id(entity_id):
             continue
         staged.append(
             (
@@ -623,7 +661,9 @@ def resolve_seeds(seed_ids: object) -> tuple[list[str], list[dict], list[str]]:
         for seed in seed_ids:
             if isinstance(seed, str):
                 if seed.strip():
-                    labels.append(_short_label(seed.strip()))
+                    label = _label_for_seed(seed.strip())
+                    if label:
+                        labels.append(label)
             elif isinstance(seed, dict):
                 chip: str | None = None
                 for field in ("id", "entity_id", "urn"):
@@ -635,7 +675,9 @@ def resolve_seeds(seed_ids: object) -> tuple[list[str], list[dict], list[str]]:
                         chip = value.strip()
                         break
                 if chip is not None:
-                    labels.append(_short_label(chip))
+                    label = _label_for_seed(chip)
+                    if label:
+                        labels.append(label)
                 else:
                     try:
                         text_value = seed.get("text")
@@ -644,7 +686,7 @@ def resolve_seeds(seed_ids: object) -> tuple[list[str], list[dict], list[str]]:
                     if isinstance(text_value, str) and text_value.strip():
                         labels.append(text_value.strip())
     else:
-        labels = [_short_label(c) for c in chips] + list(texts)
+        labels = [l for c in chips if (l := _label_for_seed(c))] + list(texts)
     for text in texts:
         candidates = resolve_text_seed(text)
         confirmations.append({"text": text, "candidates": candidates})
@@ -839,12 +881,18 @@ def build_payload(
         mid = 1.0
 
     center = list(_FALLBACK_CENTERS.get(city_display.strip().lower(), [51.5074, -0.1278]))
-    seed_hint = labels[0] if labels else city_display
+    # Seed hint for per-card copy: first human label (UUID seeds yield none),
+    # falling back to the city so the copy never renders a raw entity ID.
+    seed_hint = next(
+        (label for label in (labels or []) if isinstance(label, str) and label.strip()),
+        city_display,
+    )
     cards: list[dict] = []
     for index, entity in enumerate(picked):
         name = str(entity.get("name", ""))
         tags = entity.get("tags") if isinstance(entity.get("tags"), list) else []
-        tag_hint = str(tags[0]).replace("-", " ") if tags else (refs[0] if refs else "your crowd")
+        tag_hint = _tag_label(tags[0]) if tags else (refs[0] if refs else "your crowd")
+        tag_hint = tag_hint or (refs[0] if refs else "your crowd")
         latlng = [round(center[0] + 0.01 * index, 4), round(center[1] + 0.012 * index, 4)]
         cards.append(
             {
@@ -933,8 +981,12 @@ def build_payload(
     try:
         first_path = cards[0].get("taste_path") if cards else None
         if isinstance(first_path, list):
-            cleaned = [str(p) for p in first_path if isinstance(p, str) and p]
-            if cleaned:
+            # Drop raw entity IDs (bare UUIDs leak via seed_hint fallbacks).
+            cleaned = [
+                str(p) for p in first_path
+                if isinstance(p, str) and p.strip() and not _qloo_module.is_entity_id(p.strip())
+            ]
+            if len(cleaned) >= 2:
                 taste_path_sentence = " \u2192 ".join(cleaned)
     except Exception:
         taste_path_sentence = ""

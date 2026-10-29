@@ -56,9 +56,24 @@ def _read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _fake_hit(label: str) -> dict:
+_CATEGORY_TYPE = {
+    "Music": "artist",
+    "Food": "place",
+    "Screens": "movie",
+    "Vibes": "tag",
+}
+
+
+def _fake_hit(label: str, category: str | None = None) -> dict:
+    """Fake search hit; with a category its ``types`` match the chip's, so
+    the resolver's first pick is final (one query per label, no retyped
+    retry) — exactly the contract exercised in the live run."""
     slug = label.lower().replace(" ", "-")
-    return {"name": label, "entity_id": f"urn:entity:test:real-{slug}"}
+    hit = {"name": label, "entity_id": f"urn:entity:test:real-{slug}"}
+    qtype = _CATEGORY_TYPE.get(category) if category else None
+    if qtype:
+        hit["types"] = [f"urn:entity:{qtype}"]
+    return hit
 
 
 def test_no_key_refuses_and_touches_nothing(_isolated_files, capsys) -> None:
@@ -73,19 +88,22 @@ def test_no_key_refuses_and_touches_nothing(_isolated_files, capsys) -> None:
 def test_mocked_full_resolution_rewrites_ids(_isolated_files, monkeypatch) -> None:
     monkeypatch.setenv("QLOO_API_KEY", "test-key")
     calls: list[str] = []
+    original_chips = _read_json(_isolated_files["CHIPS_PATH"])
+    label_category = {c["label"]: c["category"] for c in original_chips}
 
     def _fake_search(query: str) -> list[dict]:
         calls.append(query)
-        return [_fake_hit(query)]
+        return [_fake_hit(query, label_category.get(query))]
 
     monkeypatch.setattr(resolve_chips, "qloo_search", _fake_search)
-    original_chips = _read_json(_isolated_files["CHIPS_PATH"])
     original_pairs = _read_json(_isolated_files["SEED_PAIRS_PATH"])
     old_urns = {chip["entity_id"] for chip in original_chips}
 
     assert resolve_chips.main() == 0
 
-    # One search per distinct label, results cached across files.
+    # One search per distinct label, results cached across files. All fake
+    # hits carry the chip category's type, so the first pick is final and
+    # no retyped retry query is spent (the retry path is covered separately).
     assert sorted(calls) == sorted({chip["label"] for chip in original_chips})
 
     chips = _read_json(_isolated_files["CHIPS_PATH"])
@@ -121,11 +139,13 @@ def test_mocked_full_resolution_rewrites_ids(_isolated_files, monkeypatch) -> No
 
 def test_unresolved_label_left_unchanged(_isolated_files, monkeypatch, capsys) -> None:
     monkeypatch.setenv("QLOO_API_KEY", "test-key")
+    original_chips = _read_json(_isolated_files["CHIPS_PATH"])
+    label_category = {c["label"]: c["category"] for c in original_chips}
 
     def _fake_search(query: str) -> list[dict]:
         if query == "Tems":
             return [{"name": "Thames River Walk", "entity_id": "urn:entity:place:thames-1"}]
-        return [_fake_hit(query)]
+        return [_fake_hit(query, label_category.get(query))]
 
     monkeypatch.setattr(resolve_chips, "qloo_search", _fake_search)
     original_chips = _read_json(_isolated_files["CHIPS_PATH"])
@@ -137,14 +157,69 @@ def test_unresolved_label_left_unchanged(_isolated_files, monkeypatch, capsys) -
     chips = _read_json(_isolated_files["CHIPS_PATH"])
     by_label = {chip["label"]: chip for chip in chips}
     assert set(by_label) == {chip["label"] for chip in original_chips}
+    original_ids = {chip["label"]: chip["entity_id"] for chip in original_chips}
     tems = by_label["Tems"]
-    assert tems["entity_id"] == "urn:entity:artist:tems"
+    # Unresolved label: the entity_id is untouched — whatever it was on disk
+    # (placeholder URN or previously resolved real UUID) survives verbatim.
+    assert tems["entity_id"] == original_ids["Tems"]
     assert tems["category"] == "Music"
     asake = by_label["Asake"]
     assert asake["entity_id"] == _fake_hit("Asake")["entity_id"]
 
     pairs = _read_json(_isolated_files["SEED_PAIRS_PATH"])
-    assert "urn:entity:artist:tems" in pairs[2]["seed_ids"]
+    assert original_ids["Tems"] in pairs[2]["seed_ids"]
+
+
+def test_retyped_retries_lead_token_for_off_category(_isolated_files, monkeypatch, capsys) -> None:
+    """A relevant top hit whose type misses the chip category triggers one
+    lead-token retry; the retry hit must match the full label and carry a
+    preferred type to win, and the retyped ID propagates into seed pairs."""
+    monkeypatch.setenv("QLOO_API_KEY", "test-key")
+    calls: list[str] = []
+    original_chips = _read_json(_isolated_files["CHIPS_PATH"])
+    label_category = {c["label"]: c["category"] for c in original_chips}
+    old_to_label = {chip["entity_id"]: chip["label"] for chip in original_chips}
+
+    def _fake_search(query: str) -> list[dict]:
+        calls.append(query)
+        if query == "Nollywood slow-burns":
+            # Relevant by name, but a book — off-category for a Screens chip.
+            return [{
+                "name": "Nollywood slow-burns",
+                "entity_id": "urn:entity:book:slow",
+                "types": ["urn:entity:book"],
+            }]
+        if query == "Nollywood":
+            # Lead-token retry hit: on-category, and its name still matches
+            # the full label (relevance is checked against the label, not
+            # the retry query).
+            return [{
+                "name": "Nollywood slow-burns",
+                "entity_id": "urn:entity:movie:fake-movie",
+                "types": ["urn:entity:movie"],
+            }]
+        return [_fake_hit(query, label_category.get(query))]
+
+    monkeypatch.setattr(resolve_chips, "qloo_search", _fake_search)
+
+    assert resolve_chips.main() == 0
+    out, _ = capsys.readouterr()
+    assert "RETYPED Nollywood slow-burns via 'Nollywood'" in out
+
+    chips = _read_json(_isolated_files["CHIPS_PATH"])
+    by_label = {chip["label"]: chip for chip in chips}
+    assert set(by_label) == set(label_category)
+    nollywood = by_label["Nollywood slow-burns"]
+    assert nollywood["entity_id"] == "urn:entity:movie:fake-movie"
+    asake = by_label["Asake"]
+    assert asake["entity_id"] == _fake_hit("Asake")["entity_id"]
+
+    old_nollywood_id = next(
+        chip_id for chip_id, label in old_to_label.items() if label == "Nollywood slow-burns"
+    )
+    pairs = _read_json(_isolated_files["SEED_PAIRS_PATH"])
+    assert "urn:entity:movie:fake-movie" in pairs[1]["seed_ids"]
+    assert old_nollywood_id not in {s for pair in pairs for s in pair["seed_ids"]}
 
 
 def test_script_source_guards() -> None:
