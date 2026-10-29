@@ -152,6 +152,73 @@ def _transplant_messages(words_display: str, evidence: object = None) -> list[di
     ]
 
 
+def _why_you_messages(words_display: str, names: list[str]) -> list[dict]:
+    """Why-you prompt: one JSON object mapping each card name to a line."""
+    text = words_display.strip() or "your home tastes"
+    listed = ", ".join(f'"{name}"' for name in names)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You write per-card why-you lines: one warm, specific sentence "
+                "per card explaining why someone with these tastes will belong "
+                "there. Reply with ONLY a single JSON object mapping each card "
+                "name to its one-sentence why-you line. No prose, no fences."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Someone into: {text}. Write a one-sentence why-you line "
+                f"for exactly these cards: {listed}."
+            ),
+        },
+    ]
+
+
+def _parse_why_you(text: object, names: list[str]) -> dict[str, str]:
+    """Parse a ``{name: line}`` JSON object; only known names survive."""
+    try:
+        if not isinstance(text, str) or not text.strip():
+            return {}
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+        try:
+            parsed = json.loads(cleaned)
+        except (TypeError, ValueError):
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start < 0 or end <= start:
+                return {}
+            try:
+                parsed = json.loads(cleaned[start : end + 1])
+            except (TypeError, ValueError):
+                return {}
+        if not isinstance(parsed, dict):
+            return {}
+        allowed = {name for name in names if isinstance(name, str) and name.strip()}
+        out: dict[str, str] = {}
+        for key, value in parsed.items():
+            try:
+                if not isinstance(key, str) or not isinstance(value, str):
+                    continue
+                name = key.strip()
+                line = value.strip()
+                if not name or not line or name not in allowed:
+                    continue
+                out[name] = line[:200]
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return {}
+
+
 def _timeout_seconds() -> float:
     """Per-call OpenRouter timeout, read at call time via OPENROUTER_TIMEOUT."""
     try:
@@ -240,6 +307,39 @@ def summarize_panes(words: object, evidence: object = None) -> dict:
         if not tourist_text or not transplant_text:
             return _template_copy(words, evidence)
         template_cards = _template_copy(words, evidence)["transplant"]["cards"]
+        try:
+            why_names = [
+                str(card.get("name"))
+                for card in template_cards
+                if isinstance(card, dict)
+                and isinstance(card.get("name"), str)
+                and card["name"].strip()
+            ]
+        except Exception:
+            why_names = []
+        if why_names:
+            try:
+                why_text = _chat_once(_why_you_messages(display, why_names), model=model)
+                why_map = _parse_why_you(why_text, why_names)
+            except Exception:
+                why_map = {}
+            if why_map:
+                try:
+                    merged = []
+                    for card in template_cards:
+                        try:
+                            if (
+                                isinstance(card, dict)
+                                and isinstance(card.get("name"), str)
+                                and card["name"] in why_map
+                            ):
+                                card = {**card, "why_you": why_map[card["name"]]}
+                        except Exception:
+                            pass
+                        merged.append(card)
+                    template_cards = merged
+                except Exception:
+                    pass
         return {
             "tourist": {"summary": tourist_text},
             "transplant": {"summary": transplant_text, "cards": template_cards},
