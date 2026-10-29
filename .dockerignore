@@ -1,0 +1,13 @@
+# Build context hygiene: secrets and caches must never enter the image.
+# Mirrors .gitignore deny rules; frontend/dist stays included (SPA artifact).
+.env
+.env.*
+backend/data/cache/
+data/cache/
+.git/
+node_modules/
+frontend/node_modules/
+.venv/
+venv/
+__pycache__/
+.pytest_cache/

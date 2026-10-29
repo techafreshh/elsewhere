@@ -1,5 +1,7 @@
-# ELSEWHERE Caddy reverse-proxy reference.
-# Caddy runs outside Compose on the VPS and forwards public traffic to the API.
+# ELSEWHERE Caddy reverse proxy (compose `caddy` service).
+# Local default serves HTTP on :80 and proxies to the compose DNS name api:8000.
+# In production point your domain's DNS at the host and Caddy issues
+# automatic HTTPS for that domain with no checked-in certs.
 :80 {
-	reverse_proxy localhost:8000
+	reverse_proxy api:8000
 }
