@@ -1538,6 +1538,7 @@ export default function App() {
                 }
                 data-index={index}
                 data-highlighted={highlighted === index ? "true" : "false"}
+                data-entity-id={card.entity_id || `urn:entity:place:card-${index}`}
               >
                 <h3>{card.name}</h3>
                 <AffinityBadge value={card.affinity_multiplier ?? 1.0} />
@@ -1557,6 +1558,12 @@ export default function App() {
                         typeof entry === "string" && entry.length > 0,
                     )
                     .join(" \u2192 ")}
+                </p>
+                <p
+                  className="entity-id"
+                  data-testid="entity-id"
+                >
+                  {card.entity_id || `urn:entity:place:card-${index}`}
                 </p>
               </article>
             ))}
