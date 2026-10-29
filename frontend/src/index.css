@@ -267,6 +267,34 @@ body {
   border-top: 1px dashed var(--line);
 }
 
+/* Seeded-pair quick launch: one button per frozen pair, chips-like pills. */
+#seed-pairs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.seed-pair-btn {
+  font: inherit;
+  font-size: 0.88rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+.seed-pair-btn:hover {
+  border-color: var(--terracotta);
+  background: #f9e8dd;
+}
+
+.seed-pair-btn:focus-visible {
+  outline: 2px solid var(--terracotta);
+  outline-offset: 1px;
+}
+
 #transplant-submit {
   font: inherit;
   font-size: 1.05rem;

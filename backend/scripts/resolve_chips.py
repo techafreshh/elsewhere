@@ -6,8 +6,8 @@ the script calls ``qloo_search`` once, keeps the first ``urn:entity:`` hit
 that passes ``agent._is_hit_relevant``, and rewrites ``chips.json``,
 ``seed_pairs.json`` (remapped through the pre-resolution chip
 ``entity_id``-to-label table), and the inline frontend snapshots
-(``FALLBACK_CHIPS`` in ``frontend/src/taste.ts``, ``HERO_LONDON_SEEDS`` in
-``frontend/src/App.tsx``) in place. Labels, categories, and cities are
+(``FALLBACK_CHIPS`` plus ``FALLBACK_SEED_PAIRS`` in ``frontend/src/taste.ts``,
+``HERO_LONDON_SEEDS`` in ``frontend/src/App.tsx``) in place. Labels, categories, and cities are
 never touched; unresolvable labels are reported and left unchanged.
 
 Without ``QLOO_API_KEY`` the script refuses (exit 2) and touches nothing.
@@ -44,6 +44,7 @@ TASTE_TS_PATH = _REPO_ROOT / "frontend" / "src" / "taste.ts"
 APP_TSX_PATH = _REPO_ROOT / "frontend" / "src" / "App.tsx"
 
 TASTE_TS_MARKER = "FALLBACK_CHIPS"
+TASTE_TS_PAIR_MARKER = "FALLBACK_SEED_PAIRS"
 APP_TSX_MARKER = "HERO_LONDON_SEEDS"
 
 
@@ -118,6 +119,7 @@ def main() -> int:
         return 1
     for path, text, marker in (
         (taste_ts_path, taste_ts, TASTE_TS_MARKER),
+        (taste_ts_path, taste_ts, TASTE_TS_PAIR_MARKER),
         (app_tsx_path, app_tsx, APP_TSX_MARKER),
     ):
         if marker not in text or "];" not in text[text.find(marker):]:
@@ -213,6 +215,10 @@ def main() -> int:
             if label in resolved
         }
         new_taste_ts = _replace_in_block(taste_ts, TASTE_TS_MARKER, urn_map)
+        if new_taste_ts is not None:
+            new_taste_ts = _replace_in_block(
+                new_taste_ts, TASTE_TS_PAIR_MARKER, urn_map
+            )
         new_app_tsx = _replace_in_block(app_tsx, APP_TSX_MARKER, urn_map)
         if new_taste_ts is None or new_app_tsx is None:  # rechecked; never silent
             print("resolve_chips: frontend block vanished; refusing to rewrite.",

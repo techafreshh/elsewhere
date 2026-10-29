@@ -8,14 +8,47 @@ import {
   CATEGORIES,
   FALLBACK_CHIPS,
   FALLBACK_CITIES,
+  FALLBACK_SEED_PAIRS,
   loadTaste,
   saveTaste,
   type Chip,
+  type SeedPair,
 } from "./taste.ts";
 
 interface CatalogResponse {
   chips?: Chip[];
   cities?: string[];
+}
+
+/** Keep only well-formed frozen pairs: non-empty `from_home`/`dest_city`
+ *  plus a non-empty string `seed_ids` array. Drops anything else so one
+ *  malformed entry never kills the quick-launch row. Never throws. */
+function toSeedPairs(value: unknown): SeedPair[] {
+  try {
+    if (!Array.isArray(value)) return [];
+    const out: SeedPair[] = [];
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object") continue;
+      const rec = entry as Record<string, unknown>;
+      if (typeof rec.from_home !== "string" || !rec.from_home) continue;
+      if (typeof rec.dest_city !== "string" || !rec.dest_city) continue;
+      if (!Array.isArray(rec.seed_ids) || rec.seed_ids.length === 0) continue;
+      if (
+        !rec.seed_ids.every(
+          (id): id is string => typeof id === "string" && id.length > 0,
+        )
+      )
+        continue;
+      out.push({
+        from_home: rec.from_home,
+        dest_city: rec.dest_city,
+        seed_ids: [...rec.seed_ids],
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 function isChipList(value: unknown): value is Chip[] {
@@ -581,6 +614,7 @@ export default function App() {
   const [initial] = useState(loadTaste);
   const [chips, setChips] = useState<Chip[]>(FALLBACK_CHIPS);
   const [cities, setCities] = useState<string[]>(FALLBACK_CITIES);
+  const [seedPairs, setSeedPairs] = useState<SeedPair[]>(FALLBACK_SEED_PAIRS);
   const [selected, setSelected] = useState<string[]>(initial.chips);
   const [city, setCity] = useState<string>(
     () => initial.city || FALLBACK_CITIES[0],
@@ -631,6 +665,19 @@ export default function App() {
       .catch(() => {
         /* offline or API down: the fallback snapshot stays rendered */
       });
+    fetch("/api/seed_pairs")
+      .then((res) => {
+        if (!res.ok) throw new Error(`seed_pairs ${res.status}`);
+        return res.json() as Promise<unknown>;
+      })
+      .then((data) => {
+        if (!live) return;
+        const pairs = toSeedPairs(data);
+        if (pairs.length > 0) setSeedPairs(pairs);
+      })
+      .catch(() => {
+        /* offline or API down: the fallback snapshot stays rendered */
+      });
     return () => {
       live = false;
     };
@@ -674,6 +721,7 @@ export default function App() {
     seeds?: Seed[];
     refinements?: string[];
     preserveConfirmations?: boolean;
+    city?: string;
   }) => {
     if (submitting) return;
     setSubmitting(true);
@@ -692,7 +740,7 @@ export default function App() {
     setStreaming(true);
     setReveal(null);
     setRevealed(true);
-    const destCity = city.trim() || DEFAULT_CITY;
+    const destCity = (opts?.city ?? city).trim() || DEFAULT_CITY;
     const rawSeeds = opts?.seeds ?? lastSeedsRef.current;
     const deduped = dedupeSeeds(rawSeeds);
     const seeds: Seed[] = deduped.length > 0 ? deduped : HERO_LONDON_SEEDS;
@@ -936,6 +984,20 @@ export default function App() {
     ]);
     setRefinements([]);
     await runSubmit({ seeds, refinements: [] });
+  };
+
+  // Seeded-pair quick launch: one click installs exactly that frozen pair's
+  // destination city plus seed set, clears refinements, and submits the full
+  // reveal. The city override rides in opts because setCity has not flushed
+  // yet when runSubmit reads the destination for the request body.
+  const onSeedPair = async (pair: SeedPair) => {
+    setCity(pair.dest_city);
+    setRefinements([]);
+    await runSubmit({
+      seeds: [...pair.seed_ids],
+      refinements: [],
+      city: pair.dest_city,
+    });
   };
 
   // Approval pills: Confirm resolves the candidate into the seed set and
@@ -1306,6 +1368,23 @@ export default function App() {
             )}
           </ul>
         </div>
+
+        {seedPairs.length > 0 && (
+          <div id="seed-pairs" role="group" aria-label="Seeded pairs">
+            {seedPairs.map((pair) => (
+              <button
+                key={`${pair.from_home}-${pair.dest_city}`}
+                type="button"
+                className="seed-pair-btn"
+                data-seed-pair={pair.dest_city}
+                data-from-home={pair.from_home}
+                onClick={() => onSeedPair(pair)}
+              >
+                {pair.from_home}{" \u2192 "}{pair.dest_city}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="field">
           <button

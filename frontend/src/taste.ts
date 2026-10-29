@@ -11,6 +11,13 @@ export interface Chip {
   entity_id: string;
 }
 
+/** One frozen judge-demo pair: a home city plus its destination and seed set. */
+export interface SeedPair {
+  from_home: string;
+  dest_city: string;
+  seed_ids: string[];
+}
+
 export interface TasteState {
   chips: string[];
   city: string;
@@ -100,6 +107,50 @@ export const FALLBACK_CHIPS: Chip[] = [
     category: "Vibes",
     entity_id: "urn:entity:tag:quiet-rooftops",
     label: "Quiet rooftops",
+  },
+];
+
+/** 4 frozen judge-demo pairs, mirroring backend/data/seed_pairs.json. */
+export const FALLBACK_SEED_PAIRS: SeedPair[] = [
+  {
+    from_home: "Lagos",
+    dest_city: "London",
+    seed_ids: [
+      "urn:entity:artist:asake",
+      "urn:entity:place:filmhouse-imax",
+      "urn:entity:brand:owambe-catering",
+      "urn:entity:brand:shawarma-2am",
+    ],
+  },
+  {
+    from_home: "Lagos",
+    dest_city: "Toronto",
+    seed_ids: [
+      "urn:entity:artist:burna-boy",
+      "urn:entity:movie:nollywood-slow-burn",
+      "urn:entity:cuisine:jollof-rice",
+      "urn:entity:tag:late-night-crowds",
+    ],
+  },
+  {
+    from_home: "NYC",
+    dest_city: "Lagos",
+    seed_ids: [
+      "urn:entity:artist:tems",
+      "urn:entity:place:late-night-cinema",
+      "urn:entity:tag:rooftop-sunsets",
+      "urn:entity:tag:street-markets",
+    ],
+  },
+  {
+    from_home: "Nairobi",
+    dest_city: "Lagos",
+    seed_ids: [
+      "urn:entity:artist:wizkid",
+      "urn:entity:tv:afrobeats-videos",
+      "urn:entity:cuisine:suya",
+      "urn:entity:tag:quiet-rooftops",
+    ],
   },
 ];
 
