@@ -891,14 +891,28 @@ def build_payload(
                 transplant_summary = transplant["summary"]
             overrides = transplant.get("cards") if isinstance(transplant, dict) else []
             if isinstance(overrides, list):
-                by_name = {
-                    str(c.get("name")): str(c.get("why_you"))
-                    for c in overrides
-                    if isinstance(c, dict) and c.get("name") and c.get("why_you")
-                }
+                by_name: dict[str, str] = {}
+                for c in overrides:
+                    try:
+                        if not isinstance(c, dict):
+                            continue
+                        raw_name = c.get("name")
+                        raw_line = c.get("why_you")
+                        if not isinstance(raw_name, str) or not isinstance(raw_line, str):
+                            continue
+                        name = raw_name.strip()
+                        line = raw_line.strip()
+                        if not name or not line:
+                            continue
+                        by_name[name] = line[:200]
+                    except Exception:
+                        continue
                 for card in cards:
-                    if card["name"] in by_name:
-                        card["why_you"] = by_name[card["name"]]
+                    try:
+                        if card.get("name") in by_name:
+                            card["why_you"] = by_name[card["name"]]
+                    except Exception:
+                        continue
     except Exception:
         pass
 
