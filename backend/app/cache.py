@@ -8,7 +8,7 @@ Disk-backed, stdlib-only: one JSON file per transplant result under
 
 Missing or corrupt cache files are treated as misses (``None``), never
 errors, per the Never-500 pattern. Writes are atomic (tmp file + rename)
-so the VPS ``seed_cache.py`` warming step and concurrent demo traffic
+so concurrent demo traffic
 cannot leave half-written JSON behind. No TTL or eviction: files live
 until deleted and warming overwrites by key.
 """

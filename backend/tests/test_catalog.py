@@ -32,16 +32,21 @@ def test_catalog_cities() -> None:
     response = client.get("/api/catalog")
     assert response.status_code == 200
     cities = response.json()["cities"]
-    for city in ("London", "Toronto", "NYC", "Lagos", "Nairobi"):
-        assert city in cities
+    # The 5-city shortlist grew into a world dictionary of geotyped rows.
+    assert len(cities) >= 100
+    names = {city.get("name") for city in cities if isinstance(city, dict)}
+    for city in ("London", "Toronto", "New York", "Lagos", "Nairobi", "Berlin"):
+        assert city in names
+    aliases = {
+        alias
+        for city in cities
+        if isinstance(city, dict)
+        for alias in (city.get("aliases") or [])
+    }
+    assert "NYC" in aliases
+    for city in cities:
+        assert isinstance(city["lat"], (int, float))
+        assert isinstance(city["lng"], (int, float))
+        assert -90 <= city["lat"] <= 90
+        assert -180 <= city["lng"] <= 180
 
-
-def test_seed_pairs() -> None:
-    response = client.get("/api/seed_pairs")
-    assert response.status_code == 200
-    pairs = response.json()
-    assert len(pairs) == 4
-    for pair in pairs:
-        assert pair["from_home"]
-        assert pair["dest_city"]
-        assert isinstance(pair["seed_ids"], list) and len(pair["seed_ids"]) > 0

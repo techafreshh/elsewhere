@@ -14,14 +14,34 @@ except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
     from app.cache import cache_get, cache_key, cache_put
 
 try:
-    from backend.app.catalog import get_catalog, get_seed_pairs
+    from backend.app.catalog import get_catalog
 except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
-    from app.catalog import get_catalog, get_seed_pairs
+    from app.catalog import get_catalog
+
+try:
+    from backend.app.qloo import (
+        is_entity_id,
+        normalize_entity_id,
+        qloo_insights_brand,
+        qloo_insights_place,
+        qloo_related,
+        qloo_search,
+    )
+except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
+    from app.qloo import (
+        is_entity_id,
+        normalize_entity_id,
+        qloo_insights_brand,
+        qloo_insights_place,
+        qloo_related,
+        qloo_search,
+    )
 
 try:
     from backend.app.agent import (
         build_note,
         build_payload,
+        city_lookup,
         normalized_refinements,
         parse_seeds,
         refinement_filters,
@@ -33,6 +53,7 @@ except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
     from app.agent import (
         build_note,
         build_payload,
+        city_lookup,
         normalized_refinements,
         parse_seeds,
         refinement_filters,
@@ -53,15 +74,6 @@ except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
 
 MODEL_SLUG = os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash")
 
-# Map fallback when the mock fixture carries no coordinates.
-_FALLBACK_CENTERS = {
-    "london": [51.5074, -0.1278],
-    "toronto": [43.6532, -79.3832],
-    "nyc": [40.7128, -74.0060],
-    "lagos": [6.5244, 3.3792],
-    "nairobi": [-1.2921, 36.8219],
-}
-
 app = FastAPI(title="ELSEWHERE")
 
 
@@ -79,14 +91,260 @@ def health() -> dict:
 
 @app.get("/api/catalog")
 def catalog() -> dict:
-    """Chip catalog grouped by category + city list, from JSON on disk."""
+    """Chip catalog grouped by category + city dictionary, from JSON on disk."""
     return get_catalog()
 
 
-@app.get("/api/seed_pairs")
-def seed_pairs() -> list:
-    """The 4 frozen demo seed pairs, from JSON on disk."""
-    return get_seed_pairs()
+def _entity_type_label(entity: object) -> str:
+    """Human type tag for a search/insights hit ("artist", "brand", …)."""
+    if not isinstance(entity, dict):
+        return ""
+    types = entity.get("types")
+    entries = types if isinstance(types, list) else [entity.get("type")]
+    for entry in entries:
+        if not isinstance(entry, str) or not entry.strip():
+            continue
+        label = entry.strip()
+        if label.startswith("urn:entity:"):
+            label = label[len("urn:entity:"):]
+        if label and label != "entity":
+            return label
+    return ""
+
+
+def _taste_hit(hit: object) -> dict | None:
+    """Normalize one qloo_search hit into a taste-suggestion shape."""
+    if not isinstance(hit, dict):
+        return None
+    name = hit.get("name")
+    entity_id = hit.get("entity_id")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    if not isinstance(entity_id, str) or not entity_id.strip():
+        return None
+    return {
+        "label": name.strip(),
+        "entity_id": entity_id.strip(),
+        "type": _entity_type_label(hit),
+    }
+
+
+@app.get("/api/search_tastes")
+def search_tastes(q: str = "") -> JSONResponse:
+    """Qloo search-as-you-type: any free text into real taste entities.
+
+    Mock (no key) keeps only fixture hits whose name matches the query —
+    the fixture is static, so echoing it for unrelated prefixes would read
+    as fabricated results.
+    """
+    query = (q or "").strip()
+    if len(query) < 2:
+        return JSONResponse(
+            status_code=422, content={"detail": "q must be at least 2 characters"}
+        )
+    try:
+        hits = qloo_search(query)
+    except Exception:
+        hits = []
+    primaries: list[dict] = []  # artists, brands, places, media — real tastes
+    secondaries: list[dict] = []  # municipalities crowd short prefixes ("Ås")
+    for hit in hits if isinstance(hits, list) else []:
+        normalized = _taste_hit(hit)
+        if normalized is None:
+            continue
+        if _qloo_mode() == "mock":
+            name = normalized["label"].casefold()
+            tokens = [tok for tok in query.casefold().split() if len(tok) >= 3]
+            if tokens and not any(tok in name for tok in tokens):
+                continue
+        types = hit.get("types") if isinstance(hit.get("types"), list) else []
+        first = types[0] if types and isinstance(types[0], str) else ""
+        is_geo_noise = first in (
+            "urn:entity:locality",
+            "urn:entity:region",
+            "urn:entity:area",
+            "urn:entity:postal_code",
+        )
+        (secondaries if is_geo_noise else primaries).append(normalized)
+        if len(primaries) >= 6 and len(secondaries) >= 3:
+            break
+    results = (primaries + secondaries)[:6]
+    return JSONResponse(
+        status_code=200, content={"results": results, "qloo_mode": _qloo_mode()}
+    )
+
+
+@app.post("/api/related")
+async def related(request: Request) -> JSONResponse:
+    """Cross-domain correlated tastes for the current selection ("people
+    into your picks also like…"). Qloo artist+brand fan-out first; the chip
+    catalog fills in when Qloo has nothing — including when nothing is
+    picked yet (empty ``entity_ids`` is a valid "cold start" call, so the
+    suggestion pills render on every onboarding step, never blank). Never
+    500s. Only malformed ids are 422."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=422, content={"detail": "Invalid JSON body"})
+    if not isinstance(body, dict):
+        return JSONResponse(status_code=422, content={"detail": "Body must be a JSON object"})
+    raw_ids = body.get("entity_ids", [])
+    if raw_ids is None:
+        raw_ids = []
+    if not isinstance(raw_ids, list):
+        return JSONResponse(
+            status_code=422, content={"detail": "entity_ids must be a list"}
+        )
+    selected: list[str] = []
+    for value in raw_ids:
+        if not isinstance(value, str) or not is_entity_id(value):
+            return JSONResponse(
+                status_code=422,
+                content={"detail": f"invalid entity id: {value!r}"},
+            )
+        selected.append(normalize_entity_id(value))
+        if len(selected) >= 8:
+            break
+    source = "qloo"
+    data: dict = {}
+    if selected:
+        try:
+            data = qloo_related(selected, take=8)
+        except Exception:
+            data = {}
+    raw_entities = (
+        data.get("entities") if isinstance(data, dict) and isinstance(data.get("entities"), list) else []
+    )
+    results = []
+    selected_set = set(selected)
+    for entity in raw_entities:
+        hit = _taste_hit(entity)
+        if hit is None or hit["entity_id"].lower() in selected_set:
+            continue
+        results.append(hit)
+        # Ten, not six: the wizard filters suggestions per category section
+        # (artist→Music, movie→Screens…), so the payload needs headroom.
+        if len(results) >= 10:
+            break
+    if not results:
+        source = "catalog"
+        try:
+            chips = [c for c in get_catalog().get("chips", []) if isinstance(c, dict)]
+        except Exception:
+            chips = []
+        for chip in chips:
+            chip_id = chip.get("entity_id")
+            label = chip.get("label")
+            if not isinstance(chip_id, str) or not chip_id.strip():
+                continue
+            if chip_id.lower() in selected_set:
+                continue
+            if not isinstance(label, str) or not label.strip():
+                continue
+            category = chip.get("category")
+            results.append({
+                "label": label.strip(),
+                "entity_id": chip_id.strip(),
+                "type": category.strip().lower() if isinstance(category, str) else "",
+            })
+            if len(results) >= 6:
+                break
+    return JSONResponse(
+        status_code=200, content={"results": results, "source": source}
+    )
+
+
+_GEO_TYPES = (
+    "urn:entity:locality",
+    "urn:entity:destination",
+    "urn:entity:place",
+    "urn:entity:neighbourhood",
+    "urn:entity:region",
+    "urn:entity:area",
+)
+
+_GEO_CACHE: dict[str, dict] = {}
+
+
+def _hit_location(hit: object) -> list | None:
+    """Extract [lat, lon] from a search hit (top-level or properties)."""
+    if not isinstance(hit, dict):
+        return None
+    for source in (hit.get("location"), (hit.get("properties") or {}).get("location")):
+        if isinstance(source, dict):
+            try:
+                lat = float(source.get("lat"))
+                lng = float(source.get("lon", source.get("lng")))
+            except (TypeError, ValueError):
+                continue
+            return [lat, lng]
+    return None
+
+
+@app.get("/api/geocode")
+def geocode(name: str = "") -> JSONResponse:
+    """Typed city -> location. World-city dictionary first (instant,
+    offline-capable, aliases included), then Qloo /search for a geography
+    hit carrying coordinates. found=false keeps the UI honest; the
+    transplant pipeline still passes the raw string to Qloo's
+    filter.location.query, which geocodes server-side. Never 500s."""
+    query = (name or "").strip()
+    if len(query) < 2:
+        return JSONResponse(
+            status_code=422, content={"detail": "name must be at least 2 characters"}
+        )
+    key = query.casefold()
+    try:
+        entry = city_lookup(query)
+    except Exception:
+        entry = None
+    if entry is not None:
+        try:
+            lat = float(entry.get("lat"))
+            lng = float(entry.get("lng"))
+        except (TypeError, ValueError):
+            entry = None
+        else:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "found": True,
+                    "name": str(entry.get("name", query)),
+                    "country": str(entry.get("country", "")),
+                    "lat": lat,
+                    "lng": lng,
+                    "source": "dictionary",
+                },
+            )
+    if key in _GEO_CACHE:
+        return JSONResponse(status_code=200, content=_GEO_CACHE[key])
+    found: dict = {"found": False}
+    try:
+        hits = qloo_search(query)
+    except Exception:
+        hits = []
+    for hit in hits if isinstance(hits, list) else []:
+        if not isinstance(hit, dict):
+            continue
+        types = hit.get("types") if isinstance(hit.get("types"), list) else []
+        if not any(t in _GEO_TYPES for t in types if isinstance(t, str)):
+            continue
+        latlng = _hit_location(hit)
+        if latlng is None:
+            continue
+        found = {
+            "found": True,
+            "name": str(hit.get("name", query)).strip() or query,
+            "country": "",
+            "lat": latlng[0],
+            "lng": latlng[1],
+            "source": "qloo",
+        }
+        break
+    if len(_GEO_CACHE) > 64:
+        _GEO_CACHE.clear()
+    _GEO_CACHE[key] = found
+    return JSONResponse(status_code=200, content=found)
 
 
 def _extract_seed_ids(seeds: object) -> list[str]:

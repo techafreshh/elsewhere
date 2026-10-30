@@ -43,11 +43,15 @@ def _isolated(monkeypatch, tmp_path):
 
 def _hero_london_body(monkeypatch, tmp_path) -> dict:
     _isolated(monkeypatch, tmp_path)
-    pairs = json.loads((REPO_ROOT / "backend" / "data" / "seed_pairs.json").read_text())
-    hero = next(p for p in pairs if p.get("dest_city") == "London")
+    seeds = [
+        "urn:entity:artist:test-asake",
+        "urn:entity:place:test-filmhouse",
+        "urn:entity:place:test-owambe",
+        "urn:entity:place:test-shawarma",
+    ]
     response = client.post(
         "/api/transplant",
-        json={"seeds": hero["seed_ids"], "dest_city": "London"},
+        json={"seeds": seeds, "dest_city": "London"},
     )
     assert response.status_code == 200
     return response.json()

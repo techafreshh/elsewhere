@@ -120,6 +120,9 @@ def build_insights_params(
     }
     if entity_ids:
         params["signal.interests.entities"] = ",".join(entity_ids)
+    tags = catalog_tags_for(entity_ids)
+    if tags:
+        params["signal.interests.tags"] = ",".join(tags)
     params.update(refinement_filters(refinements))
     return params
 
@@ -145,6 +148,110 @@ _FALLBACK_CENTERS = {
     "lagos": [6.5244, 3.3792],
     "nairobi": [-1.2921, 36.8219],
 }
+
+# Legacy spellings folding into the world-city dictionary, so "NYC" and
+# "New Delhi" resolve without growing the committed list.
+_CITY_ALIASES = {
+    "nyc": "new york",
+    "new york city": "new york",
+    "ny": "new york",
+    "washington dc": "washington",
+    "dc": "washington",
+    "cdmx": "mexico city",
+    "new delhi": "delhi",
+    "bangalore": "bengaluru",
+    "saigon": "ho chi minh city",
+    "joburg": "johannesburg",
+    "sao paulo": "sao paulo",
+}
+
+_CITY_DICT_CACHE: list[dict] | None = None
+
+
+def _city_dictionary() -> list[dict]:
+    """World-city rows from disk (name, country, lat, lng, aliases). [] on failure."""
+    global _CITY_DICT_CACHE
+    if _CITY_DICT_CACHE is None:
+        try:
+            path = Path(__file__).resolve().parents[1] / "data" / "cities.json"
+            with path.open(encoding="utf-8") as handle:
+                data = json.load(handle)
+            _CITY_DICT_CACHE = [c for c in data if isinstance(c, dict)] if isinstance(data, list) else []
+        except Exception:
+            _CITY_DICT_CACHE = []
+    return _CITY_DICT_CACHE
+
+
+def city_lookup(city: str | None) -> dict | None:
+    """Dictionary row for a typed city name (folded aliases included), else None.
+
+    Powers both the geocode endpoint (instant, offline-capable) and the
+    map-center fallback. Never raises.
+    """
+    if not isinstance(city, str) or not city.strip():
+        return None
+    key = " ".join(city.strip().lower().split())
+    folded = _CITY_ALIASES.get(key, key)
+    for entry in _city_dictionary():
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            continue
+        candidates = [name.lower()] + [
+            str(alias).strip().lower()
+            for alias in (entry.get("aliases") or [])
+            if isinstance(alias, str) and alias.strip()
+        ]
+        # Heavy accents fold away via casefold, not lower.
+        if folded.casefold() in [c.casefold() for c in candidates]:
+            return entry
+    return None
+
+
+def city_center(city: str | None) -> list | None:
+    """Best-effort ``[lat, lng]`` for a typed city: the world-city
+    dictionary first (aliases folded), then the legacy fallback centers,
+    else ``None``. Never raises."""
+    entry = city_lookup(city)
+    if entry is not None:
+        try:
+            lat = float(entry.get("lat"))
+            lng = float(entry.get("lng"))
+            return [lat, lng]
+        except (TypeError, ValueError):
+            pass
+    if not isinstance(city, str) or not city.strip():
+        return None
+    key = " ".join(city.strip().lower().split())
+    fallback = _FALLBACK_CENTERS.get(key)
+    return list(fallback) if fallback else None
+
+
+def map_center_for(city: str | None, latlngs: list) -> list:
+    """Display center for the reveal map: the mean of the (real or
+    offset-derived) card coordinates when sane, otherwise the city-center
+    chain, otherwise a world view. Qloo geocodes ``filter.location.query``
+    server-side, so a typed city outside the dictionary still yields entity
+    pins — the mean recenters the viewport onto them. Never raises."""
+    try:
+        points = []
+        for latlng in latlngs if isinstance(latlngs, list) else []:
+            if not (isinstance(latlng, (list, tuple)) and len(latlng) >= 2):
+                continue
+            lat, lng = latlng[0], latlng[1]
+            if (
+                isinstance(lat, (int, float))
+                and isinstance(lng, (int, float))
+                and -90 <= lat <= 90
+                and -180 <= lng <= 180
+            ):
+                points.append((float(lat), float(lng)))
+        if points:
+            lat = sum(p[0] for p in points) / len(points)
+            lng = sum(p[1] for p in points) / len(points)
+            return [round(lat, 4), round(lng, 4)]
+    except Exception:
+        pass
+    return city_center(city) or [20.0, 0.0]
 
 
 def _model_slug() -> str:
@@ -705,17 +812,25 @@ def _hero_call(
     refinements: list[str] | None = None,
 ) -> list:
     """Place hero call; degrades to [] on validation or transport failure."""
+    tags = catalog_tags_for(signals)
     try:
         fn = _place_fn()
         if refinements is None:
-            payload = fn(city, entity_ids=signals or None, take=take)
+            try:
+                payload = fn(city, entity_ids=signals or None, take=take, tag_ids=tags or None)
+            except TypeError:
+                payload = fn(city, entity_ids=signals or None, take=take)
         else:
             try:
                 payload = fn(
-                    city, entity_ids=signals or None, take=take, refinements=refinements
+                    city, entity_ids=signals or None, take=take, refinements=refinements,
+                    tag_ids=tags or None,
                 )
             except TypeError:
-                payload = fn(city, entity_ids=signals or None, take=take)
+                try:
+                    payload = fn(city, entity_ids=signals or None, take=take, refinements=refinements)
+                except TypeError:
+                    payload = fn(city, entity_ids=signals or None, take=take)
     except (ValueError, OSError):
         return []
     except Exception:
@@ -736,17 +851,25 @@ def _brand_names(
     refinements: list[str] | None = None,
 ) -> list[str]:
     """Brand kicker names, sliced to take; [] on any failure."""
+    tags = catalog_tags_for(signals)
     try:
         fn = _brand_fn()
         if refinements is None:
-            payload = fn(city, entity_ids=signals or None, take=take)
+            try:
+                payload = fn(city, entity_ids=signals or None, take=take, tag_ids=tags or None)
+            except TypeError:
+                payload = fn(city, entity_ids=signals or None, take=take)
         else:
             try:
                 payload = fn(
-                    city, entity_ids=signals or None, take=take, refinements=refinements
+                    city, entity_ids=signals or None, take=take, refinements=refinements,
+                    tag_ids=tags or None,
                 )
             except TypeError:
-                payload = fn(city, entity_ids=signals or None, take=take)
+                try:
+                    payload = fn(city, entity_ids=signals or None, take=take, refinements=refinements)
+                except TypeError:
+                    payload = fn(city, entity_ids=signals or None, take=take)
     except (ValueError, OSError):
         return []
     except Exception:
@@ -754,9 +877,8 @@ def _brand_names(
     entities = payload.get("entities", []) if isinstance(payload, dict) else []
     if not isinstance(entities, list):
         return []
-    return [str(e.get("name", "")) for e in entities if isinstance(e, dict) and e.get("name")][
-        :take
-    ]
+    names = [str(e.get("name", "")) for e in entities if isinstance(e, dict) and e.get("name")]
+    return _clean_brand_names(names)[:take]
 
 
 def _usable_entities(entities: object) -> list[dict]:
@@ -764,6 +886,152 @@ def _usable_entities(entities: object) -> list[dict]:
     if not isinstance(entities, list):
         return []
     return [e for e in entities if isinstance(e, dict) and e.get("name")]
+
+
+def _entity_score(entity: dict, rank: int, total: int) -> float:
+    """Personal-fit score for one result entity, best-effort by shape.
+
+    Live /v2/insights returns no explainability/affinity field (verified
+    against the hackathon API — ``feature.explainability=true`` adds
+    nothing) but results arrive in affinity order and each entity carries
+    a 0..1 ``popularity``. Preference: explicit ``explainability`` (mock
+    fixtures), then ``popularity``, then a rank-decay floor. Never raises.
+    """
+    for field in ("explainability", "popularity"):
+        try:
+            value = entity.get(field)
+            if value is None:
+                continue
+            parsed = float(value)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if parsed == parsed and 0.01 <= parsed <= 1.0:  # NaN / zero-pop guard
+            return parsed
+    if total > 0:
+        return (total - rank) / total
+    return 1.0
+
+
+def _affinity_multiplier(score: float, median_score: float) -> float:
+    """Score vs result-set median, clamped to 0.6..3.0 so no card reads
+    ``0.0×`` (an awkward zero) or an absurd spike. 1.0 when median is 0."""
+    if not median_score or median_score != median_score:
+        return 1.0
+    return round(max(0.6, min(3.0, score / median_score)), 1)
+
+
+def _entity_latlng(entity: dict, index: int, center: list) -> list:
+    """Real coordinates from ``entity.location`` when present (live shape),
+    else the deterministic center-offset pin (mock fixtures carry none)."""
+    location = entity.get("location") if isinstance(entity, dict) else None
+    if isinstance(location, dict):
+        try:
+            lat = float(location.get("lat"))
+            lon = float(location.get("lon"))
+        except (TypeError, ValueError):
+            lat, lon = 0.0, 0.0
+        if -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0 and (lat != 0.0 or lon != 0.0):
+            return [round(lat, 6), round(lon, 6)]
+    return [round(center[0] + 0.01 * index, 4), round(center[1] + 0.012 * index, 4)]
+
+
+def _entity_address(entity: dict) -> str:
+    """Street address: live results nest it under ``properties.address``;
+    mock fixtures and older shapes carry a top-level ``address``."""
+    if not isinstance(entity, dict):
+        return ""
+    properties = entity.get("properties")
+    nested = properties.get("address") if isinstance(properties, dict) else None
+    for candidate in (entity.get("address"), nested):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return ""
+
+
+_MOJIBAKE_MARKS = ("Ÿ", "Ã", "Â", "Ð", "¥", "¤", "¢", "‚", "ƒ", "„", "…Â")
+
+
+def _repair_mojibake(name: str) -> str:
+    """Undo UTF-8-as-cp1252 double encoding (Qloo data carries some, e.g.
+    Arabic brand names served as ``ŸÙÆ…``). Round-trips the string through
+    cp1252/latin-1 bytes and keeps the result only when it decodes cleanly
+    as UTF-8 — legitimate names fail the decode and pass through."""
+    if not any(mark in name for mark in _MOJIBAKE_MARKS):
+        return name
+    for codec in ("cp1252", "latin-1"):
+        try:
+            candidate = name.encode(codec)
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        try:
+            fixed = candidate.decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if fixed != name:
+            return fixed
+    return name
+
+
+def _clean_brand_names(names: object) -> list[str]:
+    """Brand kicker names: repaired, de-garbage, deduped case-insensitively,
+    order-preserving. Qloo live results carry duplicates and doubly-encoded
+    names; both read as broken to a judge."""
+    if not isinstance(names, list):
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in names:
+        if not isinstance(raw, str):
+            continue
+        name = _repair_mojibake(raw).strip()
+        if not name:
+            continue
+        # Still mojibake after repair: unfixable garbage reads worse than
+        # a missing kicker — drop it.
+        if any(mark in name for mark in _MOJIBAKE_MARKS):
+            continue
+        key = " ".join(name.lower().split())
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(name)
+    return cleaned
+
+
+def catalog_tags_for(signals: list[str] | None) -> list[str]:
+    """Tag URNs recorded for the given chip entity IDs (chips.json rows
+    carry ``tag_ids`` resolved alongside each entity). Order-preserving,
+    deduped, capped at 8 — tag signals steer results when an entity goes
+    stale in the insights graph (the Asake lesson: /search finds it, the
+    insights graph does not). Never raises."""
+    if not signals:
+        return []
+    tags: list[str] = []
+    seen: set[str] = set()
+    try:
+        chips = _catalog_chips()
+    except Exception:
+        return []
+    for signal in signals:
+        if not isinstance(signal, str):
+            continue
+        for chip in chips:
+            if not isinstance(chip, dict):
+                continue
+            chip_id = chip.get("entity_id")
+            if not isinstance(chip_id, str) or chip_id.strip().lower() != signal.strip().lower():
+                continue
+            chip_tags = chip.get("tag_ids")
+            if not isinstance(chip_tags, list):
+                break
+            for tag in chip_tags:
+                if isinstance(tag, str) and tag.strip() and tag not in seen:
+                    seen.add(tag)
+                    tags.append(tag.strip())
+            break
+        if len(tags) >= 8:
+            break
+    return tags[:8]
 
 
 def _mock_slice() -> list[dict]:
@@ -806,18 +1074,10 @@ def _fallback_entities(
                 seen.add(key)
                 merged.append(entity)
 
-    # Rung 1: retry without audiences (same live shape; mock returns fixture).
-    _absorb(
-        _usable_entities(_hero_call(city, signals or None, take=8, refinements=refinements))
-    )
-    # Rung 2: retry without tags.
-    if len(merged) < 5:
-        _absorb(
-            _usable_entities(
-                _hero_call(city, signals or None, take=8, refinements=refinements)
-            )
-        )
-    # Rung 3: retry dropping the weakest (last) seed.
+    # Rung 1: drop the weakest (last) seed — the only arg change that can
+    # plausibly return a different result. Identical-param retries were
+    # removed: under rate limiting they just doubled the burst and starved
+    # the ladder into the synthetic fill.
     if len(merged) < 5:
         trimmed = signals[:-1] if len(signals) > 1 else signals
         _absorb(
@@ -869,18 +1129,13 @@ def build_payload(
             index += 1
     picked = picked[:5]
 
-    scores: list[float] = []
-    for entity in picked:
-        try:
-            scores.append(float(entity.get("explainability", 1.0) or 1.0))
-        except (TypeError, ValueError):
-            scores.append(1.0)
+    scores = [_entity_score(entity, rank, len(picked)) for rank, entity in enumerate(picked)]
     try:
-        mid = float(median(scores)) or 1.0
+        mid = float(median(scores)) if scores else 1.0
     except (ValueError, TypeError):
         mid = 1.0
 
-    center = list(_FALLBACK_CENTERS.get(city_display.strip().lower(), [51.5074, -0.1278]))
+    center = list(city_center(city_display) or [51.5074, -0.1278])
     # Seed hint for per-card copy: first human label (UUID seeds yield none),
     # falling back to the city so the copy never renders a raw entity ID.
     seed_hint = next(
@@ -888,19 +1143,28 @@ def build_payload(
         city_display,
     )
     cards: list[dict] = []
+    real_latlngs: list = []
     for index, entity in enumerate(picked):
         name = str(entity.get("name", ""))
         tags = entity.get("tags") if isinstance(entity.get("tags"), list) else []
         tag_hint = _tag_label(tags[0]) if tags else (refs[0] if refs else "your crowd")
         tag_hint = tag_hint or (refs[0] if refs else "your crowd")
-        latlng = [round(center[0] + 0.01 * index, 4), round(center[1] + 0.012 * index, 4)]
+        latlng = _entity_latlng(entity, index, center)
+        location = entity.get("location") if isinstance(entity, dict) else None
+        if isinstance(location, dict):
+            try:
+                real_latlngs.append(
+                    [float(location["lat"]), float(location.get("lon", location.get("lng")))]
+                )
+            except (KeyError, TypeError, ValueError):
+                pass
         cards.append(
             {
                 "name": name,
-                "address": str(entity.get("address", "")),
+                "address": _entity_address(entity),
                 "latlng": latlng,
                 "why_you": f"Because {seed_hint} nights and {tag_hint} both live here",
-                "affinity_multiplier": round(scores[index] / mid, 1),
+                "affinity_multiplier": _affinity_multiplier(scores[index], mid),
                 "taste_path": [seed_hint, tag_hint, name],
                 "entity_id": str(entity.get("entity_id", "")),
             }
@@ -922,12 +1186,18 @@ def build_payload(
         )
     cards = cards[:5]
 
+    # Display center: mean over REAL entity locations only (Qloo geocodes
+    # typed cities server-side, so even a city outside the dictionary frames
+    # right); offset-derived or synthetic cards recenter exactly onto the
+    # generation center instead.
+    center = map_center_for(city_display, real_latlngs) or center
+
     tourist_summary = (
         f"Tourist take on {city_display}: the usual top-10 list, no reasons attached."
     )
     transplant_summary = f"Grounded transplant of {len(labels) or len(signals) or 1} tastes to {city_display}."
     try:
-        panes = _summarize_fn()(labels or [city_display], {"cards": picked})
+        panes = _summarize_fn()(labels or [city_display], {"cards": picked, "city": city_display})
         if isinstance(panes, dict):
             tourist = panes.get("tourist") if isinstance(panes.get("tourist"), dict) else {}
             transplant = (

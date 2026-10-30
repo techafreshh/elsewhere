@@ -1,16 +1,25 @@
+/* ELSEWHERE — onyx monochrome theme.
+ *
+ * One palette, no accent hue: near-black surfaces with white ink in dark
+ * mode (the default), white surfaces with black ink in light mode. All
+ * emphasis is inverted contrast — primary actions are white-on-black in
+ * dark mode and black-on-white in light mode. Tokens are beUI/shadcn CSS
+ * variables mapped into Tailwind v4 via @theme inline; `next-themes`
+ * toggles the `dark` class on <html> (default dark).
+ *
+ * Custom classes live OUTSIDE any @layer so they win over Tailwind
+ * utilities by construction (same rule as the previous theme).
+ */
+
 @import "tailwindcss";
 
-/* beUI shadcn tokens mapped onto the warm editorial palette: cream
- * background, ink foreground, terracotta primary. Unlayered author CSS
- * below keeps winning over utilities, so legacy selectors hold while
- * beUI components read these tokens. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -24,758 +33,1608 @@
   --color-border-strong: var(--border-strong);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-ink: var(--foreground);
 }
 
+/* Light mode (no class): grayscale paper, black ink. */
 :root {
-  --background: #F7F3EC;
-  --foreground: #1a1a1a;
-  --card: #fffdf8;
-  --card-foreground: #1a1a1a;
-  --popover: #fffdf8;
-  --popover-foreground: #1a1a1a;
-  --primary: #c96f4a;
-  --primary-foreground: #fffdf8;
-  --secondary: #efe4d2;
-  --secondary-foreground: #1a1a1a;
-  --muted: #efe4d2;
-  --muted-foreground: #6f6257;
-  --accent: #f9e8dd;
-  --accent-foreground: #1a1a1a;
+  --background: #ffffff;
+  --foreground: #161616;
+  --card: #f5f5f5;
+  --card-foreground: #161616;
+  --popover: #ffffff;
+  --popover-foreground: #161616;
+  --primary: #161616;
+  --primary-foreground: #ffffff;
+  --secondary: #ececec;
+  --secondary-foreground: #161616;
+  --muted: #ececec;
+  --muted-foreground: #6e6e6e;
+  --accent: #e4e4e4;
+  --accent-foreground: #161616;
   --destructive: #b3261e;
-  --border: #e4d9c8;
-  --border-strong: #c9b896;
-  --input: #e4d9c8;
-  --ring: #c96f4a;
-  --ink: #1a1a1a;
-  --terracotta: #c96f4a;
-  --line: #e4d9c8;
+  --border: #dcdcdc;
+  --border-strong: #bdbdbd;
+  --input: #dcdcdc;
+  --ring: #737373;
+  --volt-glow: #a3a3a3;
+  --radius: 0.5rem;
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.05);
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Dark mode (default via next-themes): volt deep-dark — grayscale, no hue. */
+.dark {
+  --background: #212121;
+  --foreground: #ffffff;
+  --card: #262626;
+  --card-foreground: #ffffff;
+  --popover: #2e2e2e;
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;
+  --primary-foreground: #212121;
+  --secondary: #333333;
+  --secondary-foreground: #ffffff;
+  --muted: #333333;
+  --muted-foreground: #999999;
+  --accent: #2e2e2e;
+  --accent-foreground: #ffffff;
+  --destructive: #e5484d;
+  --border: #404040;
+  --border-strong: #525252;
+  --input: #333333;
+  --ring: #ffffff;
+  --volt-glow: #ffffff;
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4);
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* {
+  border-color: var(--border);
 }
 
 html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
-  min-height: 100%;
-}
-
-body {
   background: var(--background);
-  color: var(--ink);
-  font-family: Georgia, serif;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* Background literal kept in the served CSS so GET / carries the F7F3EC theme. */
-.theme-cream {
-  background-color: #f7f3ec;
+::selection {
+  background: var(--foreground);
+  color: var(--background);
 }
 
-.hero-shell {
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* ---------- onboarding ---------- */
+
+.onboarding-shell {
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  max-width: 46rem;
-  margin: 0 auto;
-  padding: 2.5rem 1.25rem 4rem;
-  gap: 1.25rem;
+  justify-content: center;
+  padding: 1.5rem 1rem 2rem;
 }
 
-.hero-header {
-  text-align: center;
-}
-
-.hero-header h1 {
-  letter-spacing: 0.35em;
-  font-size: 2.5rem;
-  margin: 0;
-}
-
-.hero-header p {
-  opacity: 0.7;
-  margin: 0.5rem 0 0;
-}
-
-.taste-banner {
-  background: var(--ink);
-  color: var(--background);
-  border-radius: 999px;
-  padding: 0.5rem 1.25rem;
-  font-size: 1rem;
-}
-
-#hero {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
+.onboarding-card {
   width: 100%;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  padding: 1.5rem;
-  box-sizing: border-box;
-}
-
-.field {
+  max-width: 34rem;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.9rem;
+  margin-top: 0;
 }
 
-.field label,
-.field h2 {
-  font-size: 1.05rem;
-  margin: 0;
+.onboarding-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  margin-bottom: 0.25rem;
 }
 
-.hint {
+/* Step wizard: one section at a time, centered. */
+.step-dots {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.step-dot {
+  all: unset;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.22rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+  background: transparent;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.step-dot:hover {
+  border-color: var(--border-strong);
+  color: var(--foreground);
+}
+
+.step-dot-on {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+
+.step-dot-done {
+  border-color: var(--border-strong);
+  color: var(--foreground);
+}
+
+.onboarding-step-label {
   margin: 0;
-  opacity: 0.65;
+  text-align: center;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.step-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.4rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+}
+
+.step-nav-btn {
+  all: unset;
+  cursor: pointer;
+  font-size: 0.88rem;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  background: transparent;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.step-nav-btn:disabled {
+  color: var(--muted-foreground);
+  border-color: var(--border);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.step-nav-btn:not(:disabled):hover {
+  border-color: var(--border-strong);
+}
+
+.step-nav-next {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+
+.step-nav-next:not(:disabled):hover {
+  border-color: var(--border-strong);
+  text-decoration: none;
+  opacity: 0.92;
+}
+
+.step-count {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+}
+
+.onboarding-tagline {
+  margin: 0;
+  color: var(--muted-foreground);
   font-size: 0.9rem;
+}
+
+.theme-toggle-slot {
+  position: fixed;
+  top: 0.9rem;
+  right: 0.9rem;
+  z-index: 50;
+}
+
+.onboarding-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.onboarding-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.onboarding-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+
+.onboarding-hint[data-warn="true"] {
+  color: var(--foreground);
 }
 
 #prompt-input,
 #city-input {
-  font: inherit;
-  padding: 0.7rem 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: 0.6rem;
-  background: #fff;
-  color: var(--ink);
-  width: 100%;
-  box-sizing: border-box;
-}
-
-#prompt-input:focus,
-#city-input:focus {
-  outline: 2px solid var(--terracotta);
-  outline-offset: 1px;
-}
-
-#selected-tokens {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  min-height: 2rem;
-  align-items: center;
-}
-
-.tokens-empty {
-  opacity: 0.55;
-  font-size: 0.9rem;
-}
-
-.token {
-  font: inherit;
-  font-size: 0.85rem;
-  border: 1px solid var(--terracotta);
-  background: #f9e8dd;
-  color: var(--ink);
-  border-radius: 999px;
-  padding: 0.25rem 0.65rem;
-  cursor: pointer;
-}
-
-.tokens-clear {
-  font: inherit;
-  font-size: 0.85rem;
-  border: none;
-  background: none;
-  color: var(--terracotta);
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-#chips {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-  gap: 1rem;
-}
-
-.chip-group h3 {
-  margin: 0 0 0.5rem;
   font-size: 0.95rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.75;
 }
 
-.chip-group [role="group"] {
+/* Chip tray: grouped rows, compact pills. */
+#chips {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.chip-group-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  margin-bottom: 0.3rem;
+}
+
+.chip-row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
 }
 
 .chip {
-  font: inherit;
-  font-size: 0.88rem;
-  border: 1px solid var(--line);
-  background: #fff;
-  color: var(--ink);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 0.4rem 0.8rem;
+  padding: 0.28rem 0.75rem;
+  font-size: 0.85rem;
+  background: transparent;
+  color: var(--foreground);
   cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.chip:hover {
+  border-color: var(--border-strong);
 }
 
 .chip-on {
-  border-color: var(--terracotta);
-  background: var(--terracotta);
-  color: #fff;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
 }
 
-/* Approval pills: one per free-text candidate, confirm/skip inline. */
-#approval-pills {
+#selected-tokens {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  align-items: center;
+  gap: 0.35rem;
 }
 
-.approval-pill {
+.token {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  font-size: 0.88rem;
-  border: 1px solid var(--terracotta);
-  background: #f9e8dd;
-  color: var(--ink);
+  gap: 0.3rem;
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
-  padding: 0.3rem 0.4rem 0.3rem 0.8rem;
+  padding: 0.12rem 0.55rem;
+  font-size: 0.78rem;
 }
 
-.approval-label {
-  font-weight: bold;
-}
-
-.approval-pill button[data-confirm="true"] {
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: bold;
-  border: none;
-  border-radius: 999px;
-  background: var(--terracotta);
-  color: #fff;
-  padding: 0.3rem 0.75rem;
+.token button {
+  all: unset;
   cursor: pointer;
+  color: var(--muted-foreground);
+  line-height: 1;
 }
 
-.approval-pill button[data-skip="true"] {
-  font: inherit;
-  font-size: 0.82rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: #fff;
-  color: var(--ink);
-  padding: 0.3rem 0.75rem;
-  cursor: pointer;
+.token button:hover {
+  color: var(--foreground);
 }
 
-.approval-empty {
-  margin: 0;
-  font-size: 0.9rem;
-  opacity: 0.75;
-}
-
-.combobox-field {
-  position: relative;
-}
-
+/* City listbox */
 #city-list {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
   margin: 0.25rem 0 0;
   padding: 0.25rem;
   list-style: none;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 0.6rem;
-  max-height: 12rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  max-height: 13rem;
   overflow-y: auto;
-  z-index: 10;
-  box-sizing: border-box;
+  box-shadow: var(--shadow-soft);
 }
 
 .city-option {
-  padding: 0.5rem 0.7rem;
-  border-radius: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.45rem;
+  font-size: 0.9rem;
   cursor: pointer;
 }
 
-.city-option.hot,
-.city-option:hover {
-  background: #f9e8dd;
+.city-option:hover,
+.city-option[aria-selected="true"] {
+  background: var(--accent);
 }
 
-.city-option.free {
-  font-style: italic;
-  border-top: 1px dashed var(--line);
+/* Taste search + correlated suggestions */
+.taste-search {
+  position: relative;
+  margin-top: 0.45rem;
 }
 
-/* Seeded-pair quick launch: one button per frozen pair, chips-like pills. */
-#seed-pairs {
+#taste-search {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--foreground);
+  padding: 0.5rem 0.7rem;
+  font-size: 0.9rem;
+}
+
+#taste-search:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+
+.taste-search-results {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 0.25rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  box-shadow: var(--shadow-soft);
+}
+
+.taste-hit {
+  all: unset;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.45rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.taste-hit:hover {
+  background: var(--accent);
+}
+
+.taste-hit-type {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.taste-search-empty {
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+}
+
+#suggested-tastes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+}
+
+.suggested-caption {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.suggested-row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
 }
 
-.seed-pair-btn {
-  font: inherit;
-  font-size: 0.88rem;
-  border: 1px solid var(--line);
-  background: #fff;
-  color: var(--ink);
+.suggested-pill {
+  all: unset;
+  cursor: pointer;
+  border: 1px dashed var(--border-strong);
   border-radius: 999px;
-  padding: 0.4rem 0.8rem;
-  cursor: pointer;
+  padding: 0.22rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--foreground);
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
 }
 
-.seed-pair-btn:hover {
-  border-color: var(--terracotta);
-  background: #f9e8dd;
+.suggested-pill:hover {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-style: solid;
 }
 
-.seed-pair-btn:focus-visible {
-  outline: 2px solid var(--terracotta);
-  outline-offset: 1px;
+/* Skeleton pills while the Qloo correlation call fills the row. */
+.suggested-pill-skeleton {
+  display: inline-block;
+  height: 1.55rem;
+  border-style: solid;
+  border-color: var(--border);
+  background: var(--card);
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
 }
 
-#transplant-submit {
-  font: inherit;
-  font-size: 1.05rem;
-  font-weight: bold;
-  border: none;
-  border-radius: 0.6rem;
-  background: var(--terracotta);
-  color: #fff;
-  padding: 0.8rem 1.2rem;
-  cursor: pointer;
+/* Stale pills pulse too while a refetch is in flight — the row visibly
+   "reloads" instead of silently swapping. */
+#suggested-tastes[aria-busy="true"] .suggested-pill:not(.suggested-pill-skeleton) {
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
 }
 
-#transplant-submit:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-
-#transplant-submit:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
-}
-
-#transplant-status {
-  margin: 0;
-  font-size: 0.9rem;
-  opacity: 0.75;
-}
-
-#reveal {
-  display: grid;
-  grid-template-columns: 1fr 1.4fr;
-  gap: 1rem;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-@media (max-width: 40rem) {
-  #reveal {
-    grid-template-columns: 1fr;
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
   }
 }
 
-#tourist-pane,
-#transplant-pane {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  padding: 1.25rem;
-  box-sizing: border-box;
+@media (prefers-reduced-motion: reduce) {
+  .suggested-pill-skeleton {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
-#tourist-pane h2,
-#transplant-pane h2 {
-  margin: 0 0 0.5rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-size: 0.95rem;
-  opacity: 0.75;
+.suggested-loader {
+  margin-left: 0.4rem;
+  vertical-align: -0.12rem;
 }
 
-#tourist-summary,
-#transplant-summary {
-  margin: 0 0 1rem;
-  line-height: 1.45;
+.city-geocode-line {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted-foreground);
 }
 
-/* Refinement pills: one-tap steering that re-runs the transplant live. */
-#refinement-pills {
+.city-geocode-line[data-state="ok"] {
+  color: var(--foreground);
+}
+
+.back-to-chat {
+  all: unset;
+  align-self: flex-start;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  padding: 0.1rem 0;
+}
+
+.back-to-chat:hover {
+  color: var(--foreground);
+  text-decoration: underline;
+}
+
+/* Meh history: prior asks the current result replaced. */
+.exchange-trail {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  margin: 0 0 0.25rem;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
 }
 
-.refinement-pill {
-  font: inherit;
-  font-size: 0.88rem;
-  border: 1px solid var(--line);
-  background: #fff;
-  color: var(--ink);
+.exchange-trail-chip {
+  border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 0.4rem 0.8rem;
+  padding: 0.06rem 0.55rem;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+}
+
+/* ---------- chat workspace (volt) ---------- */
+
+.chat-inset {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-width: 0;
+}
+
+.volt-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 82%, transparent);
+  backdrop-filter: blur(10px);
+  flex: none;
+  z-index: 20;
+}
+
+.volt-icon-btn {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.6rem;
+  color: var(--muted-foreground);
+}
+
+.volt-icon-btn:hover {
+  color: var(--foreground);
+  background: var(--accent);
+}
+
+.volt-app-name {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.chat-wordmark {
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  font-size: 0.8rem;
+}
+
+.chat-header-spacer {
+  flex: 1;
+}
+
+.header-taste-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.76rem;
+  padding: 0.2rem 0.65rem;
   cursor: pointer;
 }
 
-.refinement-pill-on {
-  border-color: var(--terracotta);
-  background: var(--terracotta);
-  color: #fff;
+.header-taste-chip:hover {
+  background: var(--accent);
+}
+
+/* Session rail (overlay drawer at every size). */
+.volt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgb(0 0 0 / 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+.volt-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.volt-sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
+  width: 17rem;
+  display: flex;
+  flex-direction: column;
+  padding: 0.9rem;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  transform: translateX(-103%);
+  transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.volt-sidebar.open {
+  transform: translateX(0);
+}
+
+.volt-side-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+}
+
+.volt-new-chat {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.85rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border-strong);
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.volt-new-chat:hover {
+  border-color: var(--foreground);
+}
+
+.volt-side-label {
+  margin: 0.8rem 0 0.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.volt-side-empty {
+  margin: 0;
+}
+
+.volt-side-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.volt-side-city {
+  margin: 0.6rem 0 0;
+}
+
+.volt-side-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-top: 1px dashed var(--border);
+  padding-top: 0.7rem;
+}
+
+.volt-side-foot .volt-action.volt-start-over {
+  width: auto;
+  height: auto;
+  padding: 0.2rem 0.1rem;
+  font-size: 0.74rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.volt-start-over:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Status dots (tool rows + captions). */
+.volt-status-dot {
+  display: inline-block;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.volt-status-running {
+  background: var(--foreground);
+  animation: volt-pulse 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.volt-status-done {
+  background: var(--muted-foreground);
+}
+
+@keyframes volt-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Activity trace. */
+.activity-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+}
+
+.activity-line:has(.activity-rows) {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.activity-caption {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.activity-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+  cursor: pointer;
+  padding: 0.15rem 0.25rem;
+}
+
+.activity-summary:hover {
+  color: var(--foreground);
+}
+
+.activity-summary .chev {
+  transition: transform 140ms ease;
+}
+
+.activity-summary .chev[data-open="true"] {
+  transform: rotate(180deg);
+}
+
+.activity-rows {
+  margin: 0.25rem 0 0.15rem;
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.agent-activity-row {
+  font-size: 0.74rem;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 0.45rem;
+  padding: 0.12rem 0;
+  color: var(--muted-foreground);
+}
+
+.activity-tool-name {
+  color: var(--foreground);
+  font-weight: 500;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.activity-tool-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Transcript column — voltchat's centered max-w-3xl. */
+.chat-transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.volt-transcript {
+  width: 100%;
+  max-width: 110rem;
+  margin: 0 auto;
+  padding: 1.4rem 1.75rem 8.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.volt-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.volt-msg-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+
+.volt-user-bubble {
+  max-width: 85%;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-radius: 1.5rem;
+  padding: 0.7rem 1.1rem;
+}
+
+.volt-user-bubble .exchange-user-line {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.volt-user-bubble .exchange-meta {
+  margin: 0.2rem 0 0;
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--primary-foreground) 62%, transparent);
+}
+
+.volt-msg-assistant {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.volt-assistant-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.volt-summary {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  max-width: 78ch;
+}
+
+.volt-dots {
+  display: inline-flex;
+  gap: 0.28rem;
+  padding: 0.35rem 0;
+  align-items: center;
+}
+
+.volt-actions {
+  display: flex;
+  gap: 0.1rem;
+}
+
+.volt-action {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 0.45rem;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  transition: opacity 120ms ease;
+}
+
+.volt-action:hover,
+.volt-action-on {
+  opacity: 1;
+  color: var(--foreground);
+}
+
+.volt-action:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Composer — glass card pinned over a gradient, glow on focus. */
+.volt-composer-wrap {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: 3rem 1rem 0.9rem;
+  background: linear-gradient(
+    to top,
+    var(--background) 45%,
+    color-mix(in srgb, var(--background) 45%, transparent) 80%,
+    transparent
+  );
+  pointer-events: none;
+}
+
+.volt-composer {
+  width: 100%;
+  max-width: 110rem;
+  margin: 0 auto;
+  pointer-events: auto;
+}
+
+.volt-composer-card {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  border-radius: 26px;
+  background: color-mix(in srgb, var(--card) 62%, transparent);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.55rem 0.5rem 0.9rem;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.volt-composer-card:focus-within {
+  border-color: var(--border-strong);
+  box-shadow:
+    0 0 20px color-mix(in srgb, var(--volt-glow) 26%, transparent),
+    0 0 40px color-mix(in srgb, var(--volt-glow) 10%, transparent);
+}
+
+.volt-composer-input {
+  flex: 1;
+  resize: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  padding: 0.55rem 0;
+  min-height: 2.55rem;
+  max-height: 200px;
+}
+
+.volt-composer-input::placeholder {
+  color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+}
+
+.volt-send {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  transition: opacity 140ms ease;
+}
+
+.volt-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.volt-send:not(:disabled):hover {
+  opacity: 0.88;
+}
+
+.volt-send-stop {
+  background: var(--destructive);
+  color: #ffffff;
+}
+
+.volt-hints {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin: 0.5rem 0 0;
+  font-size: 0.6rem;
+}
+
+.volt-hint-sep {
+  opacity: 0.5;
+}
+
+/* ---------- reveal result card (inside the assistant reply) ---------- */
+
+#reveal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.55rem;
+}
+
+/* The literal side-by-side: generic LLM left, Qloo-grounded right.
+ * Stacks to one column under 52rem. */
+.comparison {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.6rem;
+  align-items: start;
+}
+
+@media (min-width: 52rem) {
+  .comparison {
+    grid-template-columns: 1fr 1.45fr;
+  }
+}
+
+#transplant-pane,
+#tourist-pane {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.8rem;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.col-label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.col-footnote {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+#transplant-summary,
+#tourist-summary {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.tourist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
 }
 
 #notices {
-  margin: 0.25rem 0 0.75rem;
-  font-size: 0.88rem;
-  line-height: 1.45;
-  opacity: 0.75;
-}
-
-#notices:empty {
-  display: none;
-}
-
-#tourist-pane ul {
   margin: 0;
-  padding-left: 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+  font-size: 0.76rem;
+  color: var(--muted-foreground);
 }
 
-.tourist-row {
-  opacity: 0.85;
-}
 
-.transplant-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.transplant-card {
-  background: #fff;
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--terracotta);
-  border-radius: 0.6rem;
-  padding: 0.75rem 0.9rem;
-}
-
+/* Map */
 #map {
-  height: 20rem;
-  border-radius: 0.6rem;
-  border: 1px solid var(--line);
-  background: #e8e0d2;
-  margin-bottom: 0.75rem;
+  height: 17rem;
+  width: 100%;
+  border-radius: 0.55rem;
+  z-index: 0;
+  background: var(--muted);
 }
 
 .leaflet-container {
-  font-family: Georgia, serif;
+  font: inherit;
+  background: var(--muted);
 }
 
-/* Warm terracotta number pins via theme tokens; Leaflet adds .leaflet-marker-icon itself. */
+/* Monochrome map tiles + chrome. */
+.leaflet-tile {
+  filter: grayscale(1) contrast(1.02);
+}
+
+.dark .leaflet-tile {
+  filter: grayscale(1) invert(1) brightness(0.85) contrast(0.9);
+}
+
+.leaflet-control-attribution {
+  background: color-mix(in srgb, var(--background) 80%, transparent) !important;
+  color: var(--muted-foreground) !important;
+  font-size: 0.62rem !important;
+}
+
+.leaflet-control-attribution a {
+  color: var(--muted-foreground) !important;
+}
+
+.leaflet-bar a {
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+  border-color: var(--border) !important;
+}
+
 .warm-pin {
-  background: var(--terracotta);
-  border: 2px solid var(--card);
+  background: var(--primary);
+  color: var(--primary-foreground);
   border-radius: 999px;
-  box-shadow: 0 1px 6px rgba(26, 26, 26, 0.35);
-  color: #fffdf8;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.8rem;
-  font-weight: bold;
+  display: grid;
+  place-items: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  box-shadow:
+    0 0 0 2px var(--background),
+    var(--shadow-soft);
 }
 
 .warm-pin span {
   line-height: 1;
 }
 
-#brands {
+/* Refinement pills */
+#refinements {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  margin: 0.75rem 0;
+}
+
+.refinement-pill {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.8rem;
+  padding: 0.28rem 0.7rem;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.refinement-pill:hover {
+  border-color: var(--border-strong);
+}
+
+.refinement-pill[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+
+/* Brand kicker row */
+#brands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
 .brand-kicker {
-  font-size: 0.8rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  border: 1px solid var(--line);
-  background: #f9e8dd;
-  color: var(--ink);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 0.25rem 0.7rem;
-}
-
-.transplant-card.card--highlight {
-  outline: 3px solid var(--terracotta);
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px #f9e8dd;
-}
-
-.transplant-card h3 {
-  margin: 0 0 0.35rem;
-  font-size: 1rem;
-}
-
-.transplant-card .entity-id {
-  margin: 0.35rem 0 0;
-  font-family: ui-monospace, monospace;
+  padding: 0.14rem 0.6rem;
   font-size: 0.72rem;
-  opacity: 0.6;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.why-you {
-  margin: 0;
-  font-size: 0.92rem;
-  line-height: 1.45;
-  opacity: 0.9;
-}
-
-.affinity-badge {
-  display: inline-block;
-  font-size: 0.78rem;
-  font-weight: bold;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #fffdf8;
-  background: var(--terracotta);
-  border-radius: 999px;
-  padding: 0.2rem 0.65rem;
-  margin: 0 0 0.4rem;
+  color: var(--muted-foreground);
 }
 
-.taste-path {
-  margin: 0.4rem 0 0;
-  font-size: 0.82rem;
-  line-height: 1.4;
-  opacity: 0.7;
-}
-
-.why-strip {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 0.6rem;
-  padding: 0.75rem 0.9rem;
-  margin: 0.75rem 0;
-  display: flex;
-  flex-direction: column;
+/* Transplant cards */
+.transplant-grid {
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 0.5rem;
 }
 
-.why-toggle {
-  font: inherit;
-  font-size: 0.9rem;
-  font-weight: bold;
-  letter-spacing: 0.04em;
-  border: 1px solid var(--terracotta);
-  background: #fff;
-  color: var(--ink);
-  border-radius: 999px;
-  padding: 0.4rem 0.9rem;
-  cursor: pointer;
-  align-self: flex-start;
+@media (min-width: 48rem) {
+  .transplant-grid {
+    /* Auto-fit: full-width panes fit 3+ cards per row instead of 2. */
+    grid-template-columns: repeat(auto-fit, minmax(14.5rem, 1fr));
+  }
 }
 
-.why-toggle[aria-expanded="true"] {
-  background: var(--terracotta);
-  color: #fff;
-}
-
-.why-body {
-  border-top: 1px dashed var(--line);
-  padding-top: 0.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.why-path {
-  margin: 0;
-  font-size: 0.9rem;
-  line-height: 1.45;
-}
-
-.why-query {
-  font-size: 0.78rem;
-  line-height: 1.5;
-  word-break: break-all;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 0.4rem;
-  padding: 0.4rem 0.6rem;
-  display: block;
-}
-
-.honesty-toggle {
-  font: inherit;
-  font-size: 0.85rem;
-  border: 1px solid var(--line);
-  background: #f9e8dd;
-  color: var(--ink);
-  border-radius: 999px;
-  padding: 0.35rem 0.8rem;
-  cursor: pointer;
-  align-self: flex-start;
-}
-
-.honesty-line {
-  margin: 0;
-  font-size: 0.88rem;
-  line-height: 1.45;
-  opacity: 0.9;
-}
-
-.alert {
-  background: #fdf0e3;
-  border: 1px solid var(--terracotta);
-  border-left: 4px solid var(--terracotta);
-  border-radius: 0.6rem;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.9rem;
-  line-height: 1.45;
-}
-
-/* Protocol-visible agent activity: one row per AG-UI TOOL_CALL_START/END. */
-#agent-activity {
-  grid-column: 1 / -1;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 0.6rem;
-  padding: 0.6rem 0.8rem;
+.transplant-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  padding: 0.6rem 0.7rem;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  box-sizing: border-box;
+  min-width: 0;
 }
 
-.agent-activity-head {
+.transplant-card h3 {
   margin: 0;
-  font-size: 0.8rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.65;
+  font-size: 0.95rem;
+  font-weight: 600;
 }
 
-.agent-activity-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  border-top: 1px dashed var(--line);
-  padding-top: 0.35rem;
-  font-size: 0.9rem;
+.transplant-card .why-you {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--muted-foreground);
 }
 
-.agent-activity-name {
-  font-family: monospace;
-  color: var(--ink);
-}
-
-.agent-activity-state {
+.transplant-card .taste-path {
+  margin: 0;
   font-size: 0.78rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--terracotta);
+  color: var(--foreground);
 }
 
-/* ---- beUI adoption layer (issue #53) ----
- * beUI components render inside the legacy selectors above; these rules keep
- * the warm editorial look and the frozen DOM contracts while beUI owns the
- * behavior. Unlayered rules win over Tailwind utilities by construction. */
-
-/* Multi-select chips: beUI option buttons keep the pill look; the span
- * wrapper carries data-entity-id / data-selected / aria-pressed. */
-#chips .chip {
-  width: auto;
-}
-.chip-group [data-entity-id] {
-  display: inline-flex;
+.transplant-card .entity-id {
+  margin: 0;
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+  word-break: break-all;
 }
 
-/* Multi-select tokens: beUI value root keeps the token hook class. */
-#selected-tokens .token {
-  max-width: 100%;
+.card--highlight {
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 1px var(--foreground);
 }
 
-/* City combobox: beUI input lives in the legacy field; search icon stays. */
-.combobox-field .city-beui {
-  font: inherit;
-}
-
-/* Approval pills: the beUI card is transparent so the pill reads as before. */
-/* Approval pills: the beUI card is transparent so the pill reads as before.
- * ApprovalCard always renders its own footer Approve button; the pills use
- * contract Confirm/Skip controls instead, so hide the unused beUI button. */
-.approval-pill > .approval-beui {
-  background: transparent;
+/* Compact the beUI Card used inside the article shell. */
+.transplant-card .transplant-card-beui {
+  gap: 0.35rem;
   padding: 0;
-  width: auto;
-}
-.approval-beui button:not([data-confirm]):not([data-skip]) {
-  display: none;
-}
-.approval-actions {
-  display: inline-flex;
-  gap: 0.4rem;
-}
-
-/* Transplant cards: article keeps the contract attrs; beUI Card owns visuals. */
-.transplant-card-beui {
-  padding: 0.75rem 0.9rem;
-  gap: 0.4rem;
   border: none;
   background: transparent;
 }
 
-/* Affinity badge: beUI pill themed terracotta, count-up inside. */
+.transplant-card .transplant-card-beui > * {
+  padding: 0;
+  margin: 0;
+}
+
+/* Affinity badge: inverted mono pill. */
 .affinity-badge {
-  border: 1px solid transparent;
-}
-
-/* Taste-path citations list under the chain line. */
-.taste-cites {
-  margin: 0.4rem 0 0;
-}
-
-/* Why-Qloo strip: beUI collapsible root keeps the strip layout. */
-.why-strip {
-  width: 100%;
-}
-.why-toggle {
-  width: auto;
-  align-self: flex-start;
-}
-
-/* Refinement pills: beUI overflow-action buttons; on-state via :has since the
- * contract attrs ride the inner label span. Empty overflow toggle is hidden. */
-.refinement-overflow-toggle {
-  display: none;
-}
-#refinement-pills button:has([data-refinement][aria-pressed="true"]) {
-  background: var(--terracotta);
-  border-color: var(--terracotta);
-  color: #fff;
-}
-
-/* Honesty switch row. */
-.honesty-wrap {
   display: inline-flex;
+  align-items: center;
   align-self: flex-start;
-  margin-top: 0.25rem;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
-/* Agent-activity beUI feed sits above the contract rows. */
-.agent-activity-beui {
-  margin: 0.25rem 0 0.5rem;
+/* Tourist (generic) rows */
+.tourist-row {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  padding-left: 0.9rem;
+  position: relative;
+}
+
+.tourist-row::before {
+  content: "·";
+  position: absolute;
+  left: 0.35rem;
+  color: var(--border-strong);
+}
+
+/* Why-Qloo-won strip */
+.why-strip {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+}
+
+.why-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  background: transparent;
+  border: none;
+  color: var(--foreground);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.why-toggle:hover {
+  background: var(--accent);
+  border-radius: var(--radius);
+}
+
+.why-path {
+  margin: 0;
+  font-size: 0.84rem;
+}
+
+.why-query {
+  margin: 0.35rem 0 0;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  word-break: break-all;
+}
+
+.why-strip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.55rem 0.7rem 0.7rem;
+  border-top: 1px solid var(--border);
+}
+
+.honesty-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+
+.honesty-line {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+}
+
+/* Broadened alert */
+.alert {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.65rem;
+  font-size: 0.8rem;
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+/* Confirmation pills */
+#approval-pills {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.approval-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.84rem;
+}
+
+.approval-pill .approval-name {
+  font-weight: 600;
+}
+
+.approval-pill .approval-confidence {
+  color: var(--muted-foreground);
+  font-size: 0.76rem;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.approval-actions button {
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.76rem;
+  padding: 0.2rem 0.55rem;
+  cursor: pointer;
+}
+
+.approval-actions button:hover {
+  background: var(--accent);
+}
+
+/* Template floor / status */
+#transplant-status {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+  min-height: 1.1em;
+}
+
+.chat-send-button {
+  border: none;
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.55rem 1.1rem;
+  cursor: pointer;
+}
+
+.chat-send-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Sidebar trigger button in the chat header */
+@media (max-width: 40rem) {
+  .onboarding-shell {
+    padding: 1rem 0.85rem 2rem;
+  }
+
+  #map {
+    height: 13rem;
+  }
+
+  .transplant-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- volt effect kit (from VoltChat) ---------- */
+
+.volt-glow {
+  box-shadow:
+    0 0 20px color-mix(in srgb, var(--volt-glow) 28%, transparent),
+    0 0 40px color-mix(in srgb, var(--volt-glow) 12%, transparent);
+}
+
+.volt-glow-strong {
+  box-shadow:
+    0 0 20px color-mix(in srgb, var(--volt-glow) 50%, transparent),
+    0 0 60px color-mix(in srgb, var(--volt-glow) 20%, transparent);
+}
+
+.volt-mono,
+.volt-mono-cap {
+  font-family: var(--font-mono);
+}
+
+.volt-mono-cap {
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+}
+
+.volt-logo-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border-strong);
+  background: var(--card);
+  color: var(--foreground);
+  flex-shrink: 0;
+}
+
+.volt-logo-lg {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 1.1rem;
+}
+
+/* Message entrance — snaps up like a voltchat message. */
+.message-enter {
+  animation: message-snap-up 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Streaming caret. */
+.cursor-blink::after {
+  content: "▊";
+  margin-left: 0.15rem;
+  color: var(--muted-foreground);
+  animation: cursor-blink 1s step-end infinite;
+}
+
+/* Bouncing loading dots (thinking state). */
+.loading-dot {
+  display: inline-block;
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+  animation: loading-dots 1.4s infinite ease-in-out both;
+}
+
+.loading-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.loading-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes message-snap-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes loading-dots {
+  0%,
+  20% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+/* Slim scrollbars, voltchat-style. */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--muted);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-enter,
+  .cursor-blink::after,
+  .loading-dot {
+    animation: none;
+  }
 }

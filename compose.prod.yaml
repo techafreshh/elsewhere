@@ -1,0 +1,30 @@
+# ELSEWHERE production stack on the techa.pro VPS (house hosting-guide Pattern C).
+# VPS-local and untracked: the gateway Caddy fronts this container — the repo's
+# own docker-compose.yml (ports + bundled caddy service) stays portable/local-dev.
+# Upstream: elsewhere:8000 on the external web_gateway network. No host ports.
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Warmed seeded-pair cache survives container recreation.
+      - elsewhere-cache:/app/backend/data/cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      web_gateway:
+        aliases: ["elsewhere"]
+
+volumes:
+  elsewhere-cache:
+
+networks:
+  web_gateway:
+    external: true

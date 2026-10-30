@@ -59,9 +59,13 @@ def _isolated(monkeypatch, tmp_path):
 
 
 def _hero_london_seeds() -> list[str]:
-    pairs = json.loads((REPO_ROOT / "backend" / "data" / "seed_pairs.json").read_text())
-    hero = next(p for p in pairs if p.get("dest_city") == "London")
-    return list(hero["seed_ids"])
+    """Synthetic chip seeds — mock mode ignores IDs, so any valid shape works."""
+    return [
+        "urn:entity:artist:test-asake",
+        "urn:entity:place:test-filmhouse",
+        "urn:entity:place:test-owambe",
+        "urn:entity:place:test-shawarma",
+    ]
 
 
 def _collect_events(raw: str) -> list[dict]:
@@ -184,7 +188,7 @@ def test_why_qloo_served_bundle_anchors() -> None:
     """Strip, toggle, alert, and query anchors survive minification into dist."""
     bundle = _served_bundle_text()
     for anchor in (
-        "Why Qloo won",
+        "Why this beats a list",
         "both panes",
         "broadened search",
         "filter.location.query",

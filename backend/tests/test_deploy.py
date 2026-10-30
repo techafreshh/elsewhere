@@ -29,7 +29,6 @@ def test_readme_setup_steps_bounded_with_keywords() -> None:
     assert 1 <= len(steps) <= 10
     assert "cp .env.example .env" in text
     assert "docker compose up" in text
-    assert "seed_cache" in text
 
 
 def test_license_is_mit() -> None:

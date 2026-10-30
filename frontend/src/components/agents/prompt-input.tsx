@@ -1,5 +1,5 @@
 "use client";
-// beui.dev/components/agents/prompt-input
+// beui.dev/components/agents/chat-app
 
 import { ArrowUp, Plus, Square } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";

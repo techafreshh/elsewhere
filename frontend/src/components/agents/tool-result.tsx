@@ -1,5 +1,5 @@
 "use client";
-// beui.dev/components/agents/tool-result
+// beui.dev/components/agents/chat-app
 
 import {
   Ban,

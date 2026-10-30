@@ -7,9 +7,13 @@ from fastapi.testclient import TestClient
 
 try:
     from backend.app import cache as cache_module
+    from backend.app import main as main_module
+    from backend.app import summarizer as summarizer_module
     from backend.app.main import app
 except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
     from app import cache as cache_module
+    from app import main as main_module
+    from app import summarizer as summarizer_module
     from app.main import app
 
 client = TestClient(app)
@@ -141,3 +145,144 @@ def test_agui_422_envelopes(monkeypatch, tmp_path) -> None:
         "/agui", content="{bad json", headers={"Content-Type": "application/json"}
     )
     assert bad.status_code == 422
+
+
+def test_tourist_lane_streams_text_events(monkeypatch, tmp_path) -> None:
+    """With an OpenRouter key the generic lane interleaves TEXT_MESSAGE
+    deltas under the fixed `tourist` id, before the grounded summary."""
+    _isolated(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    def _fake_stream(messages, on_delta, **kwargs):
+        assert any("London" in str(m.get("content", "")) for m in messages), (
+            "tourist prompt must carry the city"
+        )
+        for piece in ("Central", " Park", " then", " the usual spots"):
+            on_delta(piece)
+        return "Central Park then the usual spots"
+
+    monkeypatch.setattr(summarizer_module, "stream_chat_deltas", _fake_stream)
+    response = client.post(
+        "/agui",
+        json={"seeds": [{"id": "urn:entity:artist:test1"}], "dest_city": "London"},
+        headers={"Accept": "text/event-stream"},
+    )
+    assert response.status_code == 200
+    events = _collect_events(response.text)
+    kinds = [e.get("type") for e in events]
+
+    starts = [
+        e
+        for e in events
+        if e.get("type") == "TEXT_MESSAGE_START" and e.get("messageId") == "tourist"
+    ]
+    assert len(starts) == 1
+    contents = [
+        e
+        for e in events
+        if e.get("type") == "TEXT_MESSAGE_CONTENT" and e.get("messageId") == "tourist"
+    ]
+    assert [e.get("delta") for e in contents] == [
+        "Central",
+        " Park",
+        " then",
+        " the usual spots",
+    ]
+    ends = [
+        e
+        for e in events
+        if e.get("type") == "TEXT_MESSAGE_END" and e.get("messageId") == "tourist"
+    ]
+    assert len(ends) == 1
+    # The lane starts right after seed resolution, before heavy tools run.
+    content_at = kinds.index("TEXT_MESSAGE_CONTENT")
+    summarize_at = next(
+        i
+        for i, e in enumerate(events)
+        if e.get("type") == "TOOL_CALL_START"
+        and e.get("toolCallName") == "summarize_panes"
+    )
+    assert content_at < summarize_at
+
+    snapshot = next(
+        e["snapshot"] for e in events if e.get("type") == "STATE_SNAPSHOT"
+    )
+    assert snapshot["tourist_summary"] == "Central Park then the usual spots"
+    # One streamed line (not a list) keeps the template tour rows.
+    assert snapshot["tourist"]["items"] == [
+        "Top 10 restaurants in London",
+        "Must-see sights in London",
+        "Best nightlife in London",
+    ]
+
+
+def test_tourist_lane_lines_become_items(monkeypatch, tmp_path) -> None:
+    _isolated(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    def _fake_stream(messages, on_delta, **kwargs):
+        text = (
+            "1. Central Park\n- Times Square\n* The Met\n\n"
+            "5) Brooklyn Bridge"
+        )
+        for piece in (text[:10], text[10:]):
+            on_delta(piece)
+        return text
+
+    monkeypatch.setattr(summarizer_module, "stream_chat_deltas", _fake_stream)
+    response = client.post(
+        "/agui",
+        json={"seeds": [{"id": "urn:entity:artist:test1"}], "dest_city": "London"},
+        headers={"Accept": "text/event-stream"},
+    )
+    snapshot = next(
+        e["snapshot"]
+        for e in _collect_events(response.text)
+        if e.get("type") == "STATE_SNAPSHOT"
+    )
+    assert snapshot["tourist_items"] == [
+        "Central Park",
+        "Times Square",
+        "The Met",
+        "Brooklyn Bridge",
+    ]
+    assert snapshot["tourist"]["items"] == snapshot["tourist_items"]
+
+
+def test_no_tourist_lane_without_openrouter_key(monkeypatch, tmp_path) -> None:
+    _isolated(monkeypatch, tmp_path)  # no OPENROUTER_API_KEY -> template tourist
+    response = client.post(
+        "/agui",
+        json={"seeds": [{"id": "urn:entity:artist:test1"}], "dest_city": "London"},
+        headers={"Accept": "text/event-stream"},
+    )
+    events = _collect_events(response.text)
+    tourist_frames = [
+        e
+        for e in events
+        if str(e.get("type", "")).startswith("TEXT_MESSAGE_")
+        and e.get("messageId") == "tourist"
+    ]
+    assert tourist_frames == []
+    snapshot = next(
+        e["snapshot"] for e in events if e.get("type") == "STATE_SNAPSHOT"
+    )
+    assert snapshot["tourist_summary"].startswith("Tourist take on ")
+
+
+def test_snapshot_map_center_uses_city_dictionary(monkeypatch, tmp_path) -> None:
+    """A typed city outside the legacy centers (Berlin) still maps right."""
+    _isolated(monkeypatch, tmp_path)
+    response = client.post(
+        "/agui",
+        json={"seeds": [{"id": "urn:entity:artist:test1"}], "dest_city": "Berlin"},
+        headers={"Accept": "text/event-stream"},
+    )
+    snapshot = next(
+        e["snapshot"]
+        for e in _collect_events(response.text)
+        if e.get("type") == "STATE_SNAPSHOT"
+    )
+    center = snapshot["map_center"]
+    assert abs(center[0] - 52.52) < 0.2
+    assert abs(center[1] - 13.405) < 0.3

@@ -25,7 +25,9 @@ import urllib.request
 
 DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_TIMEOUT = 15
+# The pane summaries are the demo headline; deepseek occasionally takes
+# 15s+ to first byte, which rendered the template fallback visibly.
+DEFAULT_TIMEOUT = 30
 
 
 def _words_display(words: object) -> str:
@@ -106,9 +108,31 @@ def _template_copy(words: object, evidence: object = None) -> dict:
         }
 
 
-def _tourist_messages(words_display: str) -> list[dict]:
-    """Tourist prompt: raw words only, no Qloo evidence, no key material."""
+def _evidence_city(evidence: object) -> str:
+    """Destination city from the evidence dict, when the caller carried one."""
+    try:
+        if isinstance(evidence, dict):
+            city = evidence.get("city")
+            if isinstance(city, str) and city.strip():
+                return city.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _tourist_messages(words_display: str, evidence: object = None) -> list[dict]:
+    """Tourist prompt: same city, same ask, zero Qloo evidence — what a
+    plain chat model says before any taste graph gets involved."""
     text = words_display.strip() or "your home tastes"
+    city = _evidence_city(evidence)
+    if city:
+        ask = (
+            f"Someone is moving to {city}. At home they love: {text}. "
+            f"Give the generic LLM answer about {city}: the obvious "
+            "well-known tourist suggestions, one short paragraph."
+        )
+    else:
+        ask = f"Write a one-paragraph Tourist summary for someone into: {text}."
     return [
         {
             "role": "system",
@@ -117,10 +141,7 @@ def _tourist_messages(words_display: str) -> list[dict]:
                 "about these tastes. One short paragraph, plain and stereotypical."
             ),
         },
-        {
-            "role": "user",
-            "content": f"Write a one-paragraph Tourist summary for someone into: {text}.",
-        },
+        {"role": "user", "content": ask},
     ]
 
 
@@ -289,6 +310,90 @@ def _chat_once(
         return None
 
 
+def stream_chat_deltas(
+    messages: list[dict],
+    on_delta,
+    model: str | None = None,
+    api_key: str | None = None,
+    timeout: float | None = None,
+) -> str:
+    """Streaming OpenRouter chat; ``on_delta(piece)`` per content piece.
+
+    Returns the full accumulated text ('' on any failure). Never raises:
+    a missing key returns '' immediately, and any transport/parse failure
+    returns whatever streamed so far. ``on_delta`` exceptions are swallowed
+    so a slow consumer cannot kill the stream.
+    """
+    parts: list[str] = []
+    try:
+        key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY")
+        if not key:
+            return ""
+        resolved_model = model or os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL)
+        resolved_timeout = timeout if timeout is not None else _timeout_seconds()
+        body = json.dumps(
+            {
+                "model": resolved_model,
+                "messages": messages,
+                "max_tokens": 300,
+                "temperature": 0.7,
+                "stream": True,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            OPENROUTER_URL,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=resolved_timeout) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                return ""
+            for raw in response:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:"):].strip()
+                if not data or data == "[DONE]":
+                    if data == "[DONE]":
+                        break
+                    continue
+                try:
+                    chunk = json.loads(data)
+                except ValueError:
+                    continue
+                choices = chunk.get("choices") if isinstance(chunk, dict) else None
+                if not choices or not isinstance(choices[0], dict):
+                    continue
+                delta = choices[0].get("delta")
+                piece = delta.get("content") if isinstance(delta, dict) else None
+                if isinstance(piece, str) and piece:
+                    parts.append(piece)
+                    try:
+                        on_delta(piece)
+                    except Exception:
+                        pass
+        return "".join(parts).strip()
+    except (
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+        TimeoutError,
+        ValueError,
+        KeyError,
+        IndexError,
+        AttributeError,
+        TypeError,
+        OSError,
+    ):
+        return "".join(parts).strip()
+    except Exception:
+        return "".join(parts).strip()
+
+
 def summarize_panes(words: object, evidence: object = None) -> dict:
     """Summarize both panes with one model, falling back to template copy.
 
@@ -302,7 +407,7 @@ def summarize_panes(words: object, evidence: object = None) -> dict:
             return _template_copy(words, evidence)
         display = _words_display(words) or "your home tastes"
         model = os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL)
-        tourist_text = _chat_once(_tourist_messages(display), model=model)
+        tourist_text = _chat_once(_tourist_messages(display, evidence), model=model)
         transplant_text = _chat_once(_transplant_messages(display, evidence), model=model)
         if not tourist_text or not transplant_text:
             return _template_copy(words, evidence)

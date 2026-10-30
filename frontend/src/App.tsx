@@ -1,86 +1,94 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
-import { motion } from "motion/react";
+import {
+  ArrowUp,
+  Check,
+  ChevronDown,
+  Copy,
+  PanelLeft,
+  PanelLeftClose,
+  Plane,
+  PlusCircle,
+  Square,
+  ThumbsDown,
+  ThumbsUp,
+} from "lucide-react";
 import { TextReveal } from "@/components/motion/text-reveal";
 import { PromptInput } from "@/components/agents/prompt-input";
-import {
-  MultiSelect,
-  MultiSelectItem,
-  MultiSelectValue,
-} from "@/components/motion/multi-select";
-import { useMultiSelectContext } from "@/components/motion/multi-select/context";
-import {
-  Combobox,
-  ComboboxInput,
-  ComboboxItem,
-} from "@/components/motion/combobox";
-import { ApprovalCard } from "@/components/agents/approval-card";
-import { AgentActivity } from "@/components/agents/agent-activity";
-import { ThinkingShimmer } from "@/components/agents/loading-states/thinking-shimmer";
+import type { AgentActivityItem } from "@/components/agents/agent-activity/types";
 import { Card } from "@/components/motion/card";
-import { CitationList } from "@/components/agents/citations";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/motion/collapsible";
-import {
-  ToolResult,
-  ToolResultOutput,
-} from "@/components/agents/tool-result";
-import { OverflowActions } from "@/components/motion/overflow-actions";
 import { Switch } from "@/components/motion/switch";
 import { Tooltip } from "@/components/motion/tooltip";
-import { Alert, AlertContent, AlertIcon } from "@/components/motion/alert";
 import { Loader } from "@/components/motion/loader";
+import { ThemeToggle } from "@/components/motion/theme-toggle";
 import AffinityBadge from "./AffinityBadge.tsx";
 import TransplantMap from "./TransplantMap.tsx";
-import { streamAgui, type AguiActivity, type AguiEvent } from "./agui.ts";
+import { streamAgui, type AguiEvent } from "./agui.ts";
 import {
   CATEGORIES,
   FALLBACK_CHIPS,
   FALLBACK_CITIES,
-  FALLBACK_SEED_PAIRS,
+  SESSION_KEY,
   loadTaste,
   saveTaste,
+  hasSession,
+  loadSession,
+  saveSession,
   type Chip,
-  type SeedPair,
+  type CityEntry,
+  type TasteSession,
 } from "./taste.ts";
 
 interface CatalogResponse {
   chips?: Chip[];
-  cities?: string[];
+  cities?: Array<string | CityEntry>;
 }
 
-/** Keep only well-formed frozen pairs: non-empty `from_home`/`dest_city`
- *  plus a non-empty string `seed_ids` array. Drops anything else so one
- *  malformed entry never kills the quick-launch row. Never throws. */
-function toSeedPairs(value: unknown): SeedPair[] {
-  try {
-    if (!Array.isArray(value)) return [];
-    const out: SeedPair[] = [];
-    for (const entry of value) {
-      if (!entry || typeof entry !== "object") continue;
-      const rec = entry as Record<string, unknown>;
-      if (typeof rec.from_home !== "string" || !rec.from_home) continue;
-      if (typeof rec.dest_city !== "string" || !rec.dest_city) continue;
-      if (!Array.isArray(rec.seed_ids) || rec.seed_ids.length === 0) continue;
-      if (
-        !rec.seed_ids.every(
-          (id): id is string => typeof id === "string" && id.length > 0,
-        )
-      )
-        continue;
-      out.push({
-        from_home: rec.from_home,
-        dest_city: rec.dest_city,
-        seed_ids: [...rec.seed_ids],
-      });
-    }
-    return out;
-  } catch {
-    return [];
+/** Combobox entry: `value` is the wire city string, `label` prepends the
+ *  country for world-city context ("Berlin, Germany"). */
+interface CityOption {
+  label: string;
+  value: string;
+}
+
+function toCityOptions(rawCities: Array<string | CityEntry>): CityOption[] {
+  return rawCities.map((entry) => {
+    if (typeof entry === "string") return { label: entry, value: entry };
+    const name = typeof entry.name === "string" && entry.name ? entry.name : "";
+    const country =
+      typeof entry.country === "string" && entry.country ? `, ${entry.country}` : "";
+    return { label: name ? `${name}${country}` : name, value: name };
+  });
+}
+
+/** A search/related taste suggestion, always a real Qloo entity id. */
+interface TasteHit {
+  label: string;
+  entity_id: string;
+  type: string;
+}
+
+/** Lenient hits normalizer for /api/search_tastes and /api/related. */
+function toTasteHits(value: unknown): TasteHit[] {
+  if (!Array.isArray(value)) return [];
+  const hits: TasteHit[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const rec = entry as Record<string, unknown>;
+    if (typeof rec.label !== "string" || !rec.label.trim()) continue;
+    if (typeof rec.entity_id !== "string" || !rec.entity_id.trim()) continue;
+    hits.push({
+      label: rec.label.trim(),
+      entity_id: rec.entity_id.trim(),
+      type: typeof rec.type === "string" ? rec.type : "",
+    });
   }
+  return hits;
 }
 
 function isChipList(value: unknown): value is Chip[] {
@@ -109,104 +117,26 @@ interface TransplantCard {
   entity_id?: string;
 }
 
-interface TransplantPane {
-  summary: string;
-  cards: TransplantCard[];
-  brands: string[];
-  map_center: [number, number];
-  map_pins: { latlng: [number, number]; card_index: number }[];
-}
-
 interface WhyQlooInfo {
-  pathSentence: string;
-  query: string;
+  tastePath: string;
+  qlooQuery: string;
+  model: string;
 }
 
 interface RevealPayload {
   tourist: { summary: string; items: string[] };
-  transplant: TransplantPane;
-  whyQloo?: WhyQlooInfo;
-  model?: string;
-  broadened?: boolean;
+  transplant: {
+    summary: string;
+    cards: TransplantCard[];
+    brands: string[];
+    map_center: [number, number];
+    map_pins: { latlng: [number, number]; card_index: number }[];
+  };
+  whyQloo: WhyQlooInfo;
+  model: string;
+  broadened: boolean;
 }
 
-const DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash";
-
-/** Normalize the why_qloo disclosure (params only, never the key). Never throws. */
-function toWhyQloo(root: Record<string, unknown>, cards: TransplantCard[], city: string): WhyQlooInfo {
-  let pathSentence = "";
-  let query = "";
-  try {
-    const raw = root.why_qloo;
-    if (raw && typeof raw === "object") {
-      const rec = raw as Record<string, unknown>;
-      if (typeof rec.taste_path_sentence === "string") pathSentence = rec.taste_path_sentence;
-      else if (typeof rec.pathSentence === "string") pathSentence = rec.pathSentence;
-      if (typeof rec.qloo_query === "string") query = rec.qloo_query;
-      else if (typeof rec.query === "string") query = rec.query;
-    }
-    if (!pathSentence && typeof root.taste_path_sentence === "string") pathSentence = root.taste_path_sentence;
-    if (!query && typeof root.qloo_query === "string") query = root.qloo_query;
-  } catch {
-    /* tolerant: fallbacks below fill the strip */
-  }
-  if (!pathSentence) {
-    try {
-      const first = cards[0]?.taste_path ?? [];
-      const cleaned = first.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
-      if (cleaned.length > 0) pathSentence = cleaned.join(" \u2192 ");
-    } catch {
-      /* ignore */
-    }
-  }
-  if (!pathSentence) {
-    const place = city.trim() || DEFAULT_CITY;
-    const firstName = cards[0]?.name || `${place} transplant spot 1`;
-    pathSentence = `home \u2192 your crowd \u2192 ${firstName}`;
-  }
-  if (!query) {
-    const place = city.trim() || DEFAULT_CITY;
-    query = `filter.type=urn:entity:place&filter.location.query=${encodeURIComponent(place)}&feature.explainability=true&take=8`;
-  }
-  return { pathSentence, query };
-}
-
-/** Normalize the honesty model slug. Never throws. */
-function toHonestyModel(root: Record<string, unknown>): string {
-  try {
-    const raw = root.why_qloo;
-    if (raw && typeof raw === "object") {
-      const rec = raw as Record<string, unknown>;
-      if (typeof rec.model === "string" && rec.model) return rec.model;
-    }
-    const meta = root.meta;
-    if (meta && typeof meta === "object") {
-      const rec = meta as Record<string, unknown>;
-      if (typeof rec.model === "string" && rec.model) return rec.model;
-    }
-    if (typeof root.model === "string" && root.model) return root.model;
-  } catch {
-    /* fall through to default */
-  }
-  return DEFAULT_MODEL;
-}
-
-/** Normalize the broadened flag from meta or the flattened snapshot. Never throws. */
-function toBroadened(root: Record<string, unknown>): boolean {
-  try {
-    const meta = root.meta;
-    if (meta && typeof meta === "object") {
-      const rec = meta as Record<string, unknown>;
-      if (typeof rec.broadened === "boolean") return rec.broadened;
-    }
-    if (typeof root.broadened === "boolean") return root.broadened;
-  } catch {
-    /* default false */
-  }
-  return false;
-}
-
-/** Free-text approval candidate surfaced by resolve_seeds. Never throws. */
 interface ConfirmationCandidate {
   name: string;
   entity_id: string;
@@ -218,72 +148,26 @@ interface Confirmation {
   candidates: ConfirmationCandidate[];
 }
 
-/** Normalize the JSON `confirmations` envelope into pill-ready candidates.
- *  Drops candidates missing name/entity_id or not starting with
- *  `urn:entity:`; confidence coerces via Number() like agent.resolve_seeds
- *  and is omitted when non-numeric. Null on any mismatch. Never throws. */
-function toConfirmations(data: unknown): Confirmation[] {
-  try {
-    if (!data || typeof data !== "object") return [];
-    const raw = (data as Record<string, unknown>).confirmations;
-    if (!Array.isArray(raw)) return [];
-    const out: Confirmation[] = [];
-    for (const entry of raw) {
-      if (!entry || typeof entry !== "object") continue;
-      const rec = entry as Record<string, unknown>;
-      if (typeof rec.text !== "string" || !rec.text) continue;
-      const rawCands = Array.isArray(rec.candidates) ? rec.candidates : [];
-      const candidates: ConfirmationCandidate[] = [];
-      for (const cand of rawCands) {
-        if (!cand || typeof cand !== "object") continue;
-        const cref = cand as Record<string, unknown>;
-        if (typeof cref.name !== "string" || !cref.name) continue;
-        if (typeof cref.entity_id !== "string") continue;
-        if (!cref.entity_id.startsWith("urn:entity:")) continue;
-        const n = Number(cref.confidence);
-        candidates.push(
-          Number.isFinite(n)
-            ? { name: cref.name, entity_id: cref.entity_id, confidence: n }
-            : { name: cref.name, entity_id: cref.entity_id },
-        );
-      }
-      out.push({ text: rec.text, candidates });
-    }
-    return out;
-  } catch {
-    return [];
-  }
-}
-
-/** Normalize the JSON `notices` envelope into renderable lines.
- *  Non-string entries are dropped. Never throws. */
-function toNotices(data: unknown): string[] {
-  try {
-    if (!data || typeof data !== "object") return [];
-    const raw = (data as Record<string, unknown>).notices;
-    if (!Array.isArray(raw)) return [];
-    return raw.filter(
-      (entry): entry is string => typeof entry === "string" && entry.length > 0,
-    );
-  } catch {
-    return [];
-  }
-}
-
 /** Coerce an unknown value into a [lat, lng] pair. Null on any mismatch. */
 function toLatLng(value: unknown): [number, number] | null {
-  if (!Array.isArray(value) || value.length !== 2) return null;
-  const [lat, lng] = value;
-  if (typeof lat !== "number" || typeof lng !== "number") return null;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  return [lat, lng];
+  if (
+    Array.isArray(value) &&
+    value.length >= 2 &&
+    typeof value[0] === "number" &&
+    typeof value[1] === "number" &&
+    Number.isFinite(value[0]) &&
+    Number.isFinite(value[1])
+  ) {
+    return [value[0], value[1]];
+  }
+  return null;
 }
 
-/** Coerce an unknown multiplier to 1-decimal finite. Falls back to 1.0. */
+/** Coerce an unknown multiplier to a 1-decimal finite number. Falls back to 1.0. */
 function toAffinity(value: unknown): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 1.0;
-  return Math.round(n * 10) / 10;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.round(parsed * 10) / 10;
+  return 1.0;
 }
 
 /** Keep only non-empty strings from a taste_path candidate. Never throws. */
@@ -296,156 +180,138 @@ function toTastePath(value: unknown): string[] {
 
 const FALLBACK_CENTER: [number, number] = [51.5074, -0.1278];
 
-/** Normalize transplant map fields; card latlngs backstop missing pins, the
- *  London fallback center backstops a missing center. Never throws. */
+/** Normalize transplant map fields; card latlngs backstop missing pins. */
 function toMapData(
-  transplant: Record<string, unknown>,
+  transplant: {
+    map_center?: unknown;
+    map_pins?: unknown;
+  },
   cards: TransplantCard[],
 ): { center: [number, number]; pins: { latlng: [number, number]; card_index: number }[] } {
   const center = toLatLng(transplant.map_center) ?? FALLBACK_CENTER;
   const rawPins = Array.isArray(transplant.map_pins) ? transplant.map_pins : [];
   const pins: { latlng: [number, number]; card_index: number }[] = [];
-  rawPins.forEach((entry, i) => {
-    if (!entry || typeof entry !== "object") return;
-    const rec = entry as Record<string, unknown>;
-    const latlng = toLatLng(rec.latlng);
-    if (!latlng) return;
-    pins.push({
-      latlng,
-      card_index: typeof rec.card_index === "number" ? rec.card_index : i,
-    });
-  });
+  for (const pin of rawPins) {
+    if (!pin || typeof pin !== "object") continue;
+    const record = pin as Record<string, unknown>;
+    const latlng = toLatLng(record.latlng);
+    if (!latlng) continue;
+    const index =
+      typeof record.card_index === "number" && Number.isInteger(record.card_index)
+        ? record.card_index
+        : pins.length;
+    pins.push({ latlng, card_index: index });
+  }
   if (pins.length === 0) {
-    cards.slice(0, 5).forEach((card, i) => {
-      pins.push({
-        latlng: card.latlng ?? [center[0] + 0.01 * i, center[1] + 0.012 * i],
-        card_index: i,
-      });
+    cards.forEach((card, index) => {
+      const latlng = toLatLng(card.latlng);
+      if (latlng) pins.push({ latlng, card_index: index });
     });
   }
-  return { center, pins: pins.slice(0, 5) };
+  return { center, pins };
 }
 
-/** Verbatim brand-kicker fallback (mirrors qloo.BRAND_MOCK) so the kicker row
- *  renders even when the API is unreachable. */
-const FALLBACK_BRANDS: string[] = [
-  "Eko Bite LDN",
-  "Owambe Suya Co",
-  "Danfo Kitchen Express",
-  "Palm & Pine Grocers",
-  "Nollywood Nights Pop-up",
-];
+/** Normalize the why_qloo disclosure (params only, never the key). Never throws. */
+function toWhyQloo(
+  root: Record<string, unknown>,
+  cards: TransplantCard[],
+  city: string,
+): WhyQlooInfo {
+  const raw =
+    root.why_qloo && typeof root.why_qloo === "object"
+      ? (root.why_qloo as Record<string, unknown>)
+      : {};
+  const model =
+    typeof raw.model === "string" && raw.model ? raw.model : DEFAULT_MODEL;
+  const sentence =
+    typeof raw.taste_path_sentence === "string" ? raw.taste_path_sentence : "";
+  const query = typeof raw.qloo_query === "string" ? raw.qloo_query : "";
+  let tastePath = sentence;
+  if (!tastePath) {
+    const head = (cards[0]?.taste_path ?? []).filter(Boolean).slice(0, 2);
+    const tail = cards[0]?.name || city;
+    tastePath = [...head, tail].join(" \u2192 ");
+  }
+  const fallbackQuery =
+    "filter.type=urn:entity:place&filter.location.query=" +
+    encodeURIComponent(city || "London") +
+    "&feature.explainability=true&take=8";
+  return { tastePath, qlooQuery: query || fallbackQuery, model };
+}
 
-type StatusPath = "idle" | "sse" | "json" | "template";
+/** Normalize the honesty model slug. Never throws. */
+function toHonestyModel(root: Record<string, unknown>): string {
+  const meta = root.meta;
+  if (meta && typeof meta === "object") {
+    const model = (meta as Record<string, unknown>).model;
+    if (typeof model === "string" && model) return model;
+  }
+  if (typeof root.model === "string" && root.model) return root.model;
+  return DEFAULT_MODEL;
+}
 
-/** Wire seed: chip URNs travel as bare strings; typed prompt free text
- *  travels as `{text: ...}` so backend `parse_seeds` routes it to
- *  `resolve_text_seed` (bare strings are classified as chips and never
- *  yield `confirmations`). */
-type Seed = string | { text: string };
+/** Normalize the broadened flag from meta or the flattened snapshot. Never throws. */
+function toBroadened(root: Record<string, unknown>): boolean {
+  const meta = root.meta;
+  if (meta && typeof meta === "object") {
+    if ((meta as Record<string, unknown>).broadened === true) return true;
+  }
+  return root.broadened === true;
+}
 
-/** Dedupe a mixed seed list: strings by trimmed value, `{text}` objects
- *  by folded text. Drops empties and anything else. Never throws. */
-function dedupeSeeds(rawSeeds: unknown): Seed[] {
+/** Free-text approval candidate surfaced by resolve_seeds. Never throws. */
+function toConfirmationCandidate(value: unknown): ConfirmationCandidate | null {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+  if (typeof rec.name !== "string" || !rec.name) return null;
+  // Live Qloo ids are bare UUIDs; mock fixtures use urn:entity:* URNs.
+  const entityId = typeof rec.entity_id === "string" ? rec.entity_id : "";
+  if (!/^(urn:entity:|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$)/.test(entityId)) {
+    return null;
+  }
+  const confidence =
+    typeof rec.confidence === "number" && Number.isFinite(rec.confidence)
+      ? rec.confidence
+      : undefined;
+  return {
+    name: rec.name as string,
+    entity_id: entityId,
+    ...(confidence !== undefined ? { confidence } : {}),
+  };
+}
+
+/** Normalize the JSON `confirmations` envelope into pill-ready candidates. */
+function toConfirmations(data: unknown): Confirmation[] {
   try {
-    if (!Array.isArray(rawSeeds)) return [];
-    const seen = new Set<string>();
-    const out: Seed[] = [];
-    for (const seed of rawSeeds) {
-      if (typeof seed === "string") {
-        const trimmed = seed.trim();
-        if (!trimmed || seen.has(trimmed)) continue;
-        seen.add(trimmed);
-        out.push(trimmed);
-      } else if (seed && typeof seed === "object") {
-        const text = (seed as Record<string, unknown>).text;
-        if (typeof text !== "string") continue;
-        const trimmed = text.trim();
-        if (!trimmed) continue;
-        const key = `text:${trimmed}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push({ text: trimmed });
-      }
+    if (!Array.isArray(data)) return [];
+    const out: Confirmation[] = [];
+    for (const entry of data) {
+      if (!entry || typeof entry !== "object") continue;
+      const rec = entry as Record<string, unknown>;
+      if (typeof rec.text !== "string" || !rec.text) continue;
+      const rawCandidates = Array.isArray(rec.candidates) ? rec.candidates : [];
+      const candidates = rawCandidates
+        .map(toConfirmationCandidate)
+        .filter((c): c is ConfirmationCandidate => c !== null);
+      out.push({ text: rec.text, candidates });
     }
-    return out;
+    return out.filter((confirmation) => confirmation.candidates.length > 0);
   } catch {
     return [];
   }
 }
 
-/** Hero London seed URNs from backend/data/seed_pairs.json — the submit
- *  fallback when no chips are picked so the hero pair works with the API down. */
-const HERO_LONDON_SEEDS: string[] = [
-  "A80A473D-103A-4B71-8BFB-461D537B35EA",
-  "5DC6251A-9EC6-4D3A-8562-E0F8A5596CA2",
-  "6E524581-0ED4-49EF-8935-0CE390A82F92",
-  "8F8A810B-FDE6-4481-B344-D4F9D9623A8E",
-];
-
-const DEFAULT_CITY = "London";
-
-const STATUS_COPY: Record<StatusPath, string> = {
-  idle: "Pick tastes and a city, then transplant.",
-  sse: "Transplanted via live SSE stream.",
-  json: "Transplanted via live JSON.",
-  template: "Offline template copy \u2014 the API is unreachable.",
-};
-
-/** Generic tourist rows — the Tourist pane is a plain generic list by design. */
-function defaultTouristItems(city: string): string[] {
-  const place = city.trim() || DEFAULT_CITY;
-  return [
-    `Top 10 restaurants in ${place}`,
-    `Must-see sights in ${place}`,
-    `Best nightlife in ${place}`,
-  ];
+/** Normalize the JSON `notices` envelope into renderable lines. */
+function toNotices(data: unknown): string[] {
+  if (!Array.isArray(data)) return [];
+  return data.filter(
+    (entry): entry is string => typeof entry === "string" && entry.length > 0,
+  );
 }
 
-/** Inlined template-copy floor (mirrors summarizer._template_copy semantics):
- *  Tourist summary carries capitalised ``Tourist``, the transplant summary
- *  carries lowercase ``transplant`` plus a Qloo-affinity grounding clause,
- *  and every card why_you starts with ``Because`` — so the panes render
- *  with zero network and the two summaries always differ. */
-function templateCopy(city: string): RevealPayload {
-  const place = city.trim() || DEFAULT_CITY;
-  const cards: TransplantCard[] = [1, 2, 3, 4, 5].map((n) => ({
-    name: `${place} transplant spot ${n}`,
-    address: place,
-    latlng: [FALLBACK_CENTER[0] + 0.01 * (n - 1), FALLBACK_CENTER[1] + 0.012 * (n - 1)],
-    why_you: `Because home nights belong at ${place} transplant spot ${n}`,
-    affinity_multiplier: 1.0,
-    taste_path: ["home", "your crowd", `${place} transplant spot ${n}`],
-    entity_id: `urn:entity:place:template-${n}`,
-  }));
-  const whyQloo: WhyQlooInfo = {
-    pathSentence: ["home", "your crowd", `${place} transplant spot 1`].join(" \u2192 "),
-    query: `filter.type=urn:entity:place&filter.location.query=${encodeURIComponent(place)}&feature.explainability=true&take=8`,
-  };
-  return {
-    tourist: {
-      summary: `Tourist take on ${place}: the usual top-10 list, no reasons attached.`,
-      items: defaultTouristItems(place),
-    },
-    transplant: {
-      summary: `Grounded transplant of home tastes to ${place}: spots where your crowd already gathers, backed by Qloo affinity signals.`,
-      cards,
-      brands: [...FALLBACK_BRANDS],
-      map_center: [...FALLBACK_CENTER] as [number, number],
-      map_pins: cards.map((card, i) => ({
-        latlng: [...(card.latlng as [number, number])] as [number, number],
-        card_index: i,
-      })),
-    },
-    whyQloo,
-    model: DEFAULT_MODEL,
-    broadened: false,
-  };
-}
+const DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash";
 
-/** Normalize a transplant `cards` candidate into renderable cards (max 5).
- *  Shared by the strict final payload and the lenient progressive payload so
- *  partial deltas render exactly what the stream carried. Never throws. */
+/** Normalize a transplant `cards` candidate into renderable cards (max 5). */
 function toCardList(rawCards: unknown): TransplantCard[] {
   try {
     if (!Array.isArray(rawCards)) return [];
@@ -510,9 +376,6 @@ function toRevealPayload(data: unknown, city: string): RevealPayload | null {
       (entry): entry is string => typeof entry === "string" && entry.length > 0,
     );
     const mapData = toMapData(transplant, trimmed);
-    const whyQloo = toWhyQloo(root, trimmed, city);
-    const model = toHonestyModel(root);
-    const broadened = toBroadened(root);
     return {
       tourist: { summary: touristSummary, items },
       transplant: {
@@ -522,18 +385,16 @@ function toRevealPayload(data: unknown, city: string): RevealPayload | null {
         map_center: mapData.center,
         map_pins: mapData.pins,
       },
-      whyQloo,
-      model,
-      broadened,
+      whyQloo: toWhyQloo(root, trimmed, city),
+      model: toHonestyModel(root),
+      broadened: toBroadened(root),
     };
   } catch {
     return null;
   }
 }
 
-/** Accumulated STATE_DELTA/STATE_SNAPSHOT fragments for one /agui run.
- *  Progressive rendering merges each delta here, so the panes show exactly
- *  what the stream has carried so far. Never throws by construction. */
+/** Accumulated STATE_DELTA/STATE_SNAPSHOT fragments for one /agui run. */
 interface StreamAcc {
   cards: unknown;
   brands: unknown;
@@ -541,12 +402,15 @@ interface StreamAcc {
   pins: unknown;
   touristSummary: string;
   transplantSummary: string;
+  /** Live generic-LLM lane: TEXT_MESSAGE_* deltas under the `tourist` id. */
+  touristStream: string;
+  touristItems: unknown;
   root: Record<string, unknown>;
 }
 
 /** Lenient progressive payload: renders 1+ streamed cards with whatever
- *  summaries, brands, and map fragments have arrived, template copy filling
- *  the gaps. Null only when no renderable card has arrived yet. Never throws. */
+ *  summaries and map fragments have arrived. Null only when no renderable
+ *  card has arrived yet. Never throws. */
 function toProgressivePayload(acc: StreamAcc, city: string): RevealPayload | null {
   try {
     const cards = toCardList(acc.cards);
@@ -561,13 +425,21 @@ function toProgressivePayload(acc: StreamAcc, city: string): RevealPayload | nul
       { map_center: acc.center, map_pins: acc.pins },
       cards,
     );
+    // Neutral placeholder while the pane summaries stream (the template
+    // floor's copy would read as fake results mid-run). The live generic
+    // lane (TEXT_MESSAGE deltas) wins over whole-string STATE_DELTA text.
+    const writeLine = (place: string) => `Writing your ${place} summary…`;
+    const touristItems = Array.isArray(acc.touristItems)
+      ? toTastePath(acc.touristItems)
+      : [];
     return {
       tourist: {
-        summary: acc.touristSummary || base.tourist.summary,
-        items: defaultTouristItems(place),
+        summary:
+          acc.touristStream || acc.touristSummary || writeLine("generic"),
+        items: touristItems.length > 0 ? touristItems : defaultTouristItems(place),
       },
       transplant: {
-        summary: acc.transplantSummary || base.transplant.summary,
+        summary: acc.transplantSummary || writeLine("grounded"),
         cards,
         brands: brands.length > 0 ? brands : base.transplant.brands,
         map_center: mapData.center,
@@ -599,12 +471,21 @@ function toSnapshotPayload(
       typeof snapshot.transplant_summary === "string" && snapshot.transplant_summary
         ? snapshot.transplant_summary
         : deltaTransplant;
-    // The AG-UI snapshot already carries the spatial proof and kicker row;
-    // pass them through so the SSE path renders the map and brands too.
+    const snapshotTourist =
+      snapshot.tourist && typeof snapshot.tourist === "object"
+        ? (snapshot.tourist as Record<string, unknown>)
+        : null;
+    const rawTouristItems = Array.isArray(snapshotTourist?.items)
+      ? snapshotTourist.items
+      : Array.isArray(snapshot.tourist_items)
+        ? snapshot.tourist_items
+        : defaultTouristItems(city);
     const snap = snapshot as Record<string, unknown>;
-    // Carry the disclosure fields so the strip/toggle/alert render on SSE too.
     let whyRaw: unknown = snap.why_qloo ?? null;
-    if (!whyRaw && (typeof snap.qloo_query === "string" || typeof snap.taste_path_sentence === "string")) {
+    if (
+      !whyRaw &&
+      (typeof snap.qloo_query === "string" || typeof snap.taste_path_sentence === "string")
+    ) {
       whyRaw = {
         taste_path_sentence: snap.taste_path_sentence,
         qloo_query: snap.qloo_query,
@@ -614,15 +495,10 @@ function toSnapshotPayload(
     let metaRaw: unknown = snap.meta ?? null;
     if (!metaRaw && (typeof snap.model === "string" || typeof snap.broadened === "boolean")) {
       metaRaw = { model: snap.model, broadened: snap.broadened };
-    } else if (metaRaw && typeof metaRaw === "object") {
-      const rec = { ...(metaRaw as Record<string, unknown>) };
-      if (typeof snap.broadened === "boolean" && typeof rec.broadened !== "boolean") rec.broadened = snap.broadened;
-      if (typeof snap.model === "string" && typeof rec.model !== "string") rec.model = snap.model;
-      metaRaw = rec;
     }
     return toRevealPayload(
       {
-        tourist: { summary: rawTourist, items: defaultTouristItems(city) },
+        tourist: { summary: rawTourist, items: rawTouristItems },
         transplant: {
           summary: rawTransplant,
           cards: snap.cards,
@@ -642,1022 +518,270 @@ function toSnapshotPayload(
   }
 }
 
-/** Removable taste token label rendered inside beUI MultiSelectValue: carries
- *  the `data-token-remove` contract attribute on the clickable element itself
- *  and removes through the beUI multi-select state. Never throws. */
-function TokenLabel({ value, label }: { value: string; label: string }) {
-  const { remove } = useMultiSelectContext("TokenLabel");
-  return (
-    <span
-      data-token-remove={value}
-      role="button"
-      tabIndex={0}
-      aria-label={`Remove ${label}`}
-      onClick={(e) => {
-        e.stopPropagation();
-        remove(value);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          remove(value);
+/** Verbatim brand-kicker fallback (mirrors qloo.BRAND_MOCK) so the kicker
+ *  row still renders with zero network. */
+const FALLBACK_BRANDS: string[] = [
+  "Eko Bite LDN",
+  "Owambe Suya Co",
+  "Danfo Kitchen Express",
+  "Palm & Pine Grocers",
+  "Nollywood Nights Pop-up",
+];
+
+/** A wire seed: chip ids travel as bare strings; free text rides as {text}. */
+type Seed = string | { text: string };
+
+/** Dedupe a mixed seed list: strings by trimmed value, `{text}` objects by text. */
+function dedupeSeeds(rawSeeds: unknown): Seed[] {
+  if (!Array.isArray(rawSeeds)) return [];
+  const seenStrings = new Set<string>();
+  const seenTexts = new Set<string>();
+  const out: Seed[] = [];
+  for (const seed of rawSeeds) {
+    if (typeof seed === "string" && seed.trim()) {
+      const value = seed.trim();
+      if (!seenStrings.has(value)) {
+        seenStrings.add(value);
+        out.push(value);
+      }
+    } else if (seed && typeof seed === "object" && !Array.isArray(seed)) {
+      const text = (seed as Record<string, unknown>).text;
+      if (typeof text === "string" && text.trim()) {
+        const value = text.trim();
+        if (!seenTexts.has(value)) {
+          seenTexts.add(value);
+          out.push({ text: value });
         }
-      }}
-    >
-      {label} <span aria-hidden="true">×</span>
-    </span>
-  );
+      }
+    }
+  }
+  return out;
 }
 
-export default function App() {
-  const [initial] = useState(loadTaste);
-  const [chips, setChips] = useState<Chip[]>(FALLBACK_CHIPS);
-  const [cities, setCities] = useState<string[]>(FALLBACK_CITIES);
-  const [seedPairs, setSeedPairs] = useState<SeedPair[]>(FALLBACK_SEED_PAIRS);
-  const [selected, setSelected] = useState<string[]>(initial.chips);
-  const [city, setCity] = useState<string>(
-    () => initial.city || FALLBACK_CITIES[0],
-  );
-  const [prompt, setPrompt] = useState<string>(initial.prompt);
-  const [cityOpen, setCityOpen] = useState(false);
-  const [cityQuery, setCityQuery] = useState("");
-  const [highlight, setHighlight] = useState(-1);
-  const [reveal, setReveal] = useState<RevealPayload | null>(null);
-  const [revealed, setRevealed] = useState(false);
-  const [confirmations, setConfirmations] = useState<Confirmation[]>([]);
-  const [dismissed, setDismissed] = useState<string[]>([]);
-  const [refinements, setRefinements] = useState<string[]>([]);
-  const [notices, setNotices] = useState<string[]>([]);
-  const lastSeedsRef = useRef<Seed[]>([]);
-  const [submitting, setSubmitting] = useState(false);
-  const [activities, setActivities] = useState<AguiActivity[]>([]);
-  const [streaming, setStreaming] = useState(false);
-  const [highlighted, setHighlighted] = useState(-1);
-  const [statusPath, setStatusPath] = useState<StatusPath>("idle");
+const DEFAULT_CITY = "London";
+
+/** Generic tourist rows — the generic take is deliberately plain. */
+function defaultTouristItems(city: string): string[] {
+  return [
+    `Top 10 restaurants in ${city}`,
+    `Must-see sights in ${city}`,
+    `Best nightlife in ${city}`,
+  ];
+}
+
+/** Inlined template-copy floor (mirrors summarizer._template_copy semantics):
+ *  the panes never go empty, even offline. */
+function templateCopy(place: string): RevealPayload {
+  const city = place.trim() || DEFAULT_CITY;
+  const cards: TransplantCard[] = Array.from({ length: 5 }, (_, i) => {
+    const n = i + 1;
+    return {
+      name: `${city} transplant spot ${n}`,
+      address: city,
+      latlng: [FALLBACK_CENTER[0] + 0.01 * i, FALLBACK_CENTER[1] + 0.012 * i],
+      why_you: `Because home nights belong at ${city} transplant spot ${n}`,
+      affinity_multiplier: 1.0,
+      taste_path: ["your tastes", "your crowd", `${city} transplant spot ${n}`],
+      entity_id: `urn:entity:place:template-${n}`,
+    };
+  });
+  return {
+    tourist: {
+      summary: `Tourist take on ${city}: the usual top-10 list, no reasons attached.`,
+      items: defaultTouristItems(city),
+    },
+    transplant: {
+      summary: `transplant view for ${city}: grounded picks for your tastes, cached or computed fresh.`,
+      cards,
+      brands: FALLBACK_BRANDS,
+      map_center: FALLBACK_CENTER,
+      map_pins: cards.map((card, i) => ({
+        latlng: card.latlng ?? FALLBACK_CENTER,
+        card_index: i,
+      })),
+    },
+    whyQloo: {
+      tastePath: `your tastes \u2192 your crowd \u2192 ${city}`,
+      qlooQuery:
+        "filter.type=urn:entity:place&filter.location.query=" +
+        encodeURIComponent(city) +
+        "&feature.explainability=true&take=8",
+      model: DEFAULT_MODEL,
+    },
+    model: DEFAULT_MODEL,
+    broadened: false,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Exchange model                                                      */
+/* ------------------------------------------------------------------ */
+
+interface Exchange {
+  id: string;
+  /** What the user asked, displayed in the user bubble. */
+  userText: string;
+  /** Whole-run history: prior user texts the current result replaced. */
+  history: string[];
+  /** Chips + city context line under the user bubble. */
+  metaLine: string;
+  seeds: Seed[];
+  city: string;
+  refinements: string[];
+  status: "streaming" | "json" | "template" | "error";
+  activities: AgentActivityItem[];
+  activityDone: boolean;
+  summaryText: string;
+  payload: RevealPayload | null;
+  confirmations: Confirmation[];
+  notices: string[];
+}
+
+function newExchangeId(): string {
+  return `ex-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Rebuild the last live exchange from the persisted session. Returns []
+ *  for anything unusable — a corrupt session degrades to a fresh chat. */
+function restoreExchanges(session: TasteSession | null): Exchange[] {
+  try {
+    const raw = session?.exchanges;
+    if (!Array.isArray(raw) || raw.length === 0) return [];
+    const last = raw[raw.length - 1];
+    if (!last || typeof last !== "object") return [];
+    const rec = last as Record<string, unknown>;
+    const city = typeof rec.city === "string" && rec.city ? rec.city : DEFAULT_CITY;
+    const payload = toRevealPayload(rec.payload, city);
+    if (!payload) return [];
+    return [
+      {
+        id: typeof rec.id === "string" && rec.id ? rec.id : newExchangeId(),
+        userText: typeof rec.userText === "string" ? rec.userText : "",
+        history: Array.isArray(rec.history)
+          ? rec.history.filter((entry): entry is string => typeof entry === "string")
+          : [],
+        metaLine: typeof rec.metaLine === "string" ? rec.metaLine : "",
+        seeds: dedupeSeeds(rec.seeds),
+        city,
+        refinements: Array.isArray(rec.refinements)
+          ? rec.refinements.filter((entry): entry is string => typeof entry === "string")
+          : [],
+        status: "json" as const,
+        activities: [],
+        activityDone: true,
+        summaryText:
+          typeof rec.summaryText === "string" && rec.summaryText
+            ? rec.summaryText
+            : payload.transplant.summary,
+        payload,
+        confirmations: toConfirmations(rec.confirmations),
+        notices: toNotices(rec.notices),
+      },
+    ];
+  } catch {
+    return [];
+  }
+}
+
+/** Map TOOL_CALL events to AgentActivity items (the beUI activity feed). */
+function toolActivityItem(event: Record<string, unknown>, phase: "start" | "end"): AgentActivityItem | null {
+  const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
+  const name = typeof event.toolCallName === "string" ? event.toolCallName : "";
+  if (!id || !name) return null;
+  const args = event.args;
+  let target = name;
+  if (phase === "start" && args && typeof args === "object") {
+    const record = args as Record<string, unknown>;
+    const location = typeof record.location === "string" ? record.location : "";
+    const query = typeof record.query === "string" ? record.query : "";
+    target = location ? `${name} · ${location}` : query ? `${name} · "${query}"` : name;
+  }
+  return { id: `${id}-${phase}`, type: "tool", action: "run", target };
+}
+
+/* ------------------------------------------------------------------ */
+/* Result card (rendered inside the assistant reply)                   */
+/* ------------------------------------------------------------------ */
+
+interface ResultCardProps {
+  exchange: Exchange;
+  highlighted: number | null;
+  onPinClick: (index: number) => void;
+  onRefinement: (refinement: string) => void;
+  onSkipCandidate: (text: string) => void;
+}
+
+function ResultCard({
+  exchange,
+  highlighted,
+  onPinClick,
+  onRefinement,
+  onSkipCandidate,
+}: ResultCardProps) {
   const [whyOpen, setWhyOpen] = useState(false);
   const [honestyOn, setHonestyOn] = useState(false);
-  const queryRef = useRef("");
-  const blurTimer = useRef<number | null>(null);
-
-  // Live catalog first, inlined snapshot as the offline fallback.
-  useEffect(() => {
-    let live = true;
-    fetch("/api/catalog")
-      .then((res) => {
-        if (!res.ok) throw new Error(`catalog ${res.status}`);
-        return res.json() as Promise<CatalogResponse>;
-      })
-      .then((data) => {
-        if (!live) return;
-        if (isChipList(data.chips)) setChips(data.chips);
-        if (Array.isArray(data.cities) && data.cities.length > 0) {
-          const names = data.cities.filter(
-            (entry): entry is string =>
-              typeof entry === "string" && entry.length > 0,
-          );
-          if (names.length > 0) {
-            setCities(names);
-            setCity((prev) => prev || names[0]);
-          }
-        }
-      })
-      .catch(() => {
-        /* offline or API down: the fallback snapshot stays rendered */
-      });
-    fetch("/api/seed_pairs")
-      .then((res) => {
-        if (!res.ok) throw new Error(`seed_pairs ${res.status}`);
-        return res.json() as Promise<unknown>;
-      })
-      .then((data) => {
-        if (!live) return;
-        const pairs = toSeedPairs(data);
-        if (pairs.length > 0) setSeedPairs(pairs);
-      })
-      .catch(() => {
-        /* offline or API down: the fallback snapshot stays rendered */
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  // Persist every taste change so a reload restores chips, city, and prompt.
-  useEffect(() => {
-    saveTaste({ chips: selected, city, prompt });
-  }, [selected, city, prompt]);
-
-  // Never leak the combobox blur-close timer.
-  useEffect(
-    () => () => {
-      if (blurTimer.current !== null) {
-        window.clearTimeout(blurTimer.current);
-      }
-    },
-    [],
-  );
-
-  // Parameterised submit core: Tier-1 state-driven POST /agui SSE stream
-  // (3s optimistic abort while idle, 25s once frames flow), then the POST
-  // /api/transplant JSON fallback, then the inlined template-copy floor.
-  // Confirmations plus notices only ride the JSON envelope (the AG-UI stream
-  // never emits them), so the JSON endpoint is fetched on every submit: it
-  // adopts the cards when SSE produced nothing and always refreshes the
-  // approval pills and the notices line. TOOL_CALL_START/END rows and
-  // STATE_DELTA progressive reveals dispatch as frames arrive; a forced 500,
-  // RUN_ERROR, abort, or null final payload silently abandons the stream for
-  // the JSON ladder. Never rejects and never surfaces a 500 — every path
-  // ends in panes.
-  const runSubmit = async (opts?: {
-    seeds?: Seed[];
-    refinements?: string[];
-    preserveConfirmations?: boolean;
-    city?: string;
-  }) => {
-    if (submitting) return;
-    setSubmitting(true);
-    // Protocol-visible waiting state: empty panes plus a live activity feed
-    // before the first byte arrives, so TOOL_CALL_START rows land within 1s.
-    const acc: StreamAcc = {
-      cards: undefined,
-      brands: undefined,
-      center: undefined,
-      pins: undefined,
-      touristSummary: "",
-      transplantSummary: "",
-      root: {},
-    };
-    setActivities([]);
-    setStreaming(true);
-    setReveal(null);
-    setRevealed(true);
-    const destCity = (opts?.city ?? city).trim() || DEFAULT_CITY;
-    const rawSeeds = opts?.seeds ?? lastSeedsRef.current;
-    const deduped = dedupeSeeds(rawSeeds);
-    const seeds: Seed[] = deduped.length > 0 ? deduped : HERO_LONDON_SEEDS;
-    lastSeedsRef.current = seeds;
-    const effRefs = opts?.refinements ?? refinements;
-    const body = JSON.stringify({ seeds, dest_city: destCity, refinements: effRefs });
-    let payload: RevealPayload | null = null;
-    let path: StatusPath = "json";
-    // Dispatch one streamed AG-UI event into activity + progressive state.
-    // Throws on RUN_ERROR so the fallback ladder owns the failure. Never logs.
-    const applyAguiEvent = (event: AguiEvent) => {
-      const type = event.type;
-      if (type === "TOOL_CALL_START") {
-        const toolCallId =
-          typeof event.toolCallId === "string" ? event.toolCallId : "";
-        const toolCallName =
-          typeof event.toolCallName === "string" ? event.toolCallName : "";
-        if (!toolCallName) return;
-        setActivities((prev) => {
-          if (
-            toolCallId &&
-            prev.some((entry) => entry.toolCallId === toolCallId)
-          )
-            return prev;
-          if (
-            !toolCallId &&
-            prev.some(
-              (entry) => entry.toolCallName === toolCallName && !entry.done,
-            )
-          )
-            return prev;
-          return [
-            ...prev,
-            {
-              toolCallId: toolCallId || `${toolCallName}-${prev.length}`,
-              toolCallName,
-              phase: "start" as const,
-              done: false,
-            },
-          ];
-        });
-        return;
-      }
-      if (type === "TOOL_CALL_END") {
-        const toolCallId =
-          typeof event.toolCallId === "string" ? event.toolCallId : "";
-        if (!toolCallId) return;
-        setActivities((prev) =>
-          prev.map((entry) =>
-            entry.toolCallId === toolCallId
-              ? { ...entry, phase: "end" as const, done: true }
-              : entry,
-          ),
-        );
-        return;
-      }
-      if (type === "STATE_DELTA" && event.delta && typeof event.delta === "object") {
-        const delta = event.delta as Record<string, unknown>;
-        if (Array.isArray(delta.cards)) acc.cards = delta.cards;
-        if (Array.isArray(delta.brands)) acc.brands = delta.brands;
-        if (delta.map_center !== undefined) acc.center = delta.map_center;
-        if (delta.map_pins !== undefined) acc.pins = delta.map_pins;
-        else if (delta.pins !== undefined) acc.pins = delta.pins;
-        if (typeof delta.tourist_summary === "string" && delta.tourist_summary) {
-          acc.touristSummary = delta.tourist_summary;
-        }
-        if (typeof delta.transplant_summary === "string" && delta.transplant_summary) {
-          acc.transplantSummary = delta.transplant_summary;
-        }
-        const nestedTourist = delta.tourist;
-        if (nestedTourist && typeof nestedTourist === "object") {
-          const summary = (nestedTourist as Record<string, unknown>).summary;
-          if (typeof summary === "string" && summary) acc.touristSummary = summary;
-        }
-        const nestedTransplant = delta.transplant;
-        if (nestedTransplant && typeof nestedTransplant === "object") {
-          const summary = (nestedTransplant as Record<string, unknown>).summary;
-          if (typeof summary === "string" && summary) acc.transplantSummary = summary;
-        }
-        for (const key of [
-          "why_qloo",
-          "meta",
-          "qloo_query",
-          "taste_path_sentence",
-          "model",
-          "broadened",
-        ]) {
-          if (delta[key] !== undefined) acc.root[key] = delta[key];
-        }
-        // Progressive reveal: render exactly what this delta carried.
-        const partial = toProgressivePayload(acc, destCity);
-        if (partial) setReveal(partial);
-        return;
-      }
-      if (type === "STATE_SNAPSHOT" && event.snapshot && typeof event.snapshot === "object") {
-        const snapshot = event.snapshot as Record<string, unknown>;
-        if (Array.isArray(snapshot.cards)) acc.cards = snapshot.cards;
-        if (Array.isArray(snapshot.brands)) acc.brands = snapshot.brands;
-        if (snapshot.map_center !== undefined) acc.center = snapshot.map_center;
-        if (snapshot.map_pins !== undefined) acc.pins = snapshot.map_pins;
-        else if (snapshot.pins !== undefined) acc.pins = snapshot.pins;
-        if (typeof snapshot.tourist_summary === "string" && snapshot.tourist_summary) {
-          acc.touristSummary = snapshot.tourist_summary;
-        }
-        if (typeof snapshot.transplant_summary === "string" && snapshot.transplant_summary) {
-          acc.transplantSummary = snapshot.transplant_summary;
-        }
-        for (const key of [
-          "why_qloo",
-          "meta",
-          "qloo_query",
-          "taste_path_sentence",
-          "model",
-          "broadened",
-          "city",
-        ]) {
-          if (snapshot[key] !== undefined) acc.root[key] = snapshot[key];
-        }
-        const full = toSnapshotPayload(
-          snapshot,
-          acc.touristSummary,
-          acc.transplantSummary,
-          destCity,
-        );
-        if (full) {
-          payload = full;
-          path = "sse";
-          setReveal(full);
-        }
-        return;
-      }
-      if (type === "RUN_FINISHED") {
-        const result = event.result;
-        if (!payload && result && typeof result === "object") {
-          const normalized = toRevealPayload(result, destCity);
-          if (normalized) {
-            payload = normalized;
-            path = "sse";
-          }
-        }
-        if (!payload) {
-          const progressive = toProgressivePayload(acc, destCity);
-          if (progressive && progressive.transplant.cards.length >= 5) {
-            payload = progressive;
-            path = "sse";
-          }
-        }
-        if (payload) setReveal(payload);
-        return;
-      }
-      if (type === "RUN_ERROR") {
-        throw new Error("agui run error");
-      }
-    };
-    try {
-      const controller = new AbortController();
-      // Optimistic abort while the stream is idle; once frames flow the run
-      // gets a full completion budget so slow streams still finish live.
-      let live = false;
-      let longTimer: number | undefined;
-      const idleTimer = window.setTimeout(() => controller.abort(), 3000);
-      const markLive = () => {
-        if (!live) {
-          live = true;
-          window.clearTimeout(idleTimer);
-          longTimer = window.setTimeout(() => controller.abort(), 25000);
-        }
-      };
-      try {
-        const sseRes = await fetch("/agui", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "text/event-stream",
-          },
-          body,
-          signal: controller.signal,
-        });
-        if (!sseRes.ok) throw new Error(`agui ${sseRes.status}`);
-        await streamAgui(sseRes, (event) => {
-          markLive();
-          applyAguiEvent(event);
-        });
-        if (!payload) throw new Error("agui produced no payload");
-      } finally {
-        window.clearTimeout(idleTimer);
-        if (longTimer !== undefined) window.clearTimeout(longTimer);
-      }
-    } catch {
-      /* SSE unavailable — the JSON fallback below handles it */
-    }
-    let jsonData: unknown = null;
-    try {
-      const res = await fetch("/api/transplant", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      if (res.ok) jsonData = (await res.json()) as unknown;
-    } catch {
-      jsonData = null;
-    }
-    if (!payload && jsonData) {
-      payload = toRevealPayload(jsonData, destCity);
-      if (payload) path = "json";
-    }
-    if (jsonData) {
-      // Refinement re-runs reuse resolved seeds, so the fresh envelope
-      // carries no confirmations — keep the pills the prompt submit showed.
-      if (!opts?.preserveConfirmations) {
-        setConfirmations(toConfirmations(jsonData));
-        setDismissed([]);
-      }
-      setNotices(toNotices(jsonData));
-    } else if (!opts?.preserveConfirmations) {
-      setConfirmations([]);
-      setNotices([]);
-    }
-    if (!payload) {
-      payload = templateCopy(destCity);
-      path = "template";
-    }
-    setReveal(payload);
-    setRevealed(true);
-    setStatusPath(path);
-    setHighlighted(-1);
-    setStreaming(false);
-    setSubmitting(false);
-  };
-
-  // Hero Transplant button: prompt free text joins the seed set as a
-  // `{text}` object (deduped) so typed tastes reach `resolve_text_seed`
-  // and come back as `confirmations`; bare strings would classify as
-  // chips and yield none. Refinements reset for the fresh search.
-  // The existing saveTaste effect persists prompt unchanged.
-  const onSubmit = async () => {
-    const text = prompt.trim();
-    const seeds: Seed[] = dedupeSeeds([
-      ...selected,
-      ...(text ? [{ text }] : []),
-    ]);
-    setRefinements([]);
-    await runSubmit({ seeds, refinements: [] });
-  };
-
-  // Seeded-pair quick launch: one click installs exactly that frozen pair's
-  // destination city plus seed set, clears refinements, and submits the full
-  // reveal. The city override rides in opts because setCity has not flushed
-  // yet when runSubmit reads the destination for the request body.
-  const onSeedPair = async (pair: SeedPair) => {
-    setCity(pair.dest_city);
-    setRefinements([]);
-    await runSubmit({
-      seeds: [...pair.seed_ids],
-      refinements: [],
-      city: pair.dest_city,
-    });
-  };
-
-  // Approval pills: Confirm resolves the candidate into the seed set and
-  // re-runs with resolved IDs; Skip dismisses that candidate pill only
-  // and never blocks submit.
-  const confirmCandidate = (entityId: string) => {
-    const next = selected.includes(entityId) ? selected : [...selected, entityId];
-    setSelected(next);
-    void runSubmit({ seeds: next, refinements });
-  };
-
-  const skipCandidate = (entityId: string) => {
-    setDismissed((prev) => (prev.includes(entityId) ? prev : [...prev, entityId]));
-  };
-
-  // Refinement pills: toggle the key, then re-submit the last resolved
-  // seeds plus city with the new refinements so the server cache_key hits
-  // and cards visibly re-render (or the notices line explains why).
-  const toggleRefinement = (key: string) => {
-    const next = refinements.includes(key)
-      ? refinements.filter((entry) => entry !== key)
-      : [...refinements, key];
-    setRefinements(next);
-    void runSubmit({
-      seeds: lastSeedsRef.current,
-      refinements: next,
-      preserveConfirmations: true,
-    });
-  };
-
-  // Spatial proof on first paint: run the hero transplant automatically so the
-  // Leaflet map, its 5 pins, and the brand kicker row render with no gesture.
-  useEffect(() => {
-    void onSubmit();
-    // Single first-paint run; later renders go through the submit button.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Pin → card linkage: highlight the matching card and bring it into view,
-  // satisfying either acceptance branch (highlight class or scroll).
-  const onPinClick = (index: number) => {
-    setHighlighted(index);
-    requestAnimationFrame(() => {
-      document
-        .querySelector(`.transplant-card[data-index="${index}"]`)
-        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
-  };
-
-  const cardNames = useMemo(
-    () => (reveal?.transplant.cards ?? []).map((card) => card.name),
-    [reveal],
-  );
-
-  const grouped = useMemo(
-    () =>
-      CATEGORIES.map((category) => ({
-        category,
-        items: chips.filter((chip) => chip.category === category),
-      })),
-    [chips],
-  );
-
-  const selectedChips = useMemo(
-    () =>
-      selected.flatMap((entityId) => {
-        const chip = chips.find((entry) => entry.entity_id === entityId);
-        return chip ? [chip] : [];
-      }),
-    [selected, chips],
-  );
-
-  const trimmedQuery = cityQuery.trim();
-  const loweredQuery = trimmedQuery.toLowerCase();
-  const filteredCities = useMemo(() => {
-    if (!loweredQuery) return cities;
-    return cities.filter((name) =>
-      name.toLowerCase().includes(loweredQuery),
-    );
-  }, [cities, loweredQuery]);
-  const hasExactMatch =
-    trimmedQuery.length > 0 &&
-    cities.some((name) => name.toLowerCase() === loweredQuery);
-
-  const openCityList = () => {
-    if (blurTimer.current !== null) {
-      window.clearTimeout(blurTimer.current);
-      blurTimer.current = null;
-    }
-    queryRef.current = "";
-    setCityQuery("");
-    setHighlight(-1);
-    setCityOpen(true);
-  };
-
-  const chooseCity = (value: string) => {
-    const next = value.trim();
-    if (next) setCity(next);
-    queryRef.current = "";
-    setCityQuery("");
-    setCityOpen(false);
-    setHighlight(-1);
-  };
-
-  const onCityBlur = () => {
-    if (blurTimer.current !== null) window.clearTimeout(blurTimer.current);
-    blurTimer.current = window.setTimeout(() => {
-      // Free search: a typed value left in the box becomes the city.
-      const pending = queryRef.current.trim();
-      if (pending) setCity(pending);
-      queryRef.current = "";
-      setCityQuery("");
-      setCityOpen(false);
-      setHighlight(-1);
-      blurTimer.current = null;
-    }, 120);
-  };
-
-  const onCityKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setCityOpen(true);
-      setHighlight((prev) =>
-        filteredCities.length === 0
-          ? -1
-          : (prev + 1) % filteredCities.length,
-      );
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHighlight((prev) =>
-        filteredCities.length === 0
-          ? -1
-          : (prev - 1 + filteredCities.length) % filteredCities.length,
-      );
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (
-        cityOpen &&
-        highlight >= 0 &&
-        highlight < filteredCities.length
-      ) {
-        chooseCity(filteredCities[highlight]);
-      } else if (trimmedQuery) {
-        chooseCity(trimmedQuery);
-      } else {
-        setCityOpen(false);
-      }
-    } else if (e.key === "Escape") {
-      setCityOpen(false);
-      setHighlight(-1);
-    }
-  };
-
-  // Closed combobox shows the chosen city; an open one shows the live query.
-  const visibleCities = cityOpen ? filteredCities : cities;
+  const payload = exchange.payload;
+  if (!payload) return null;
+  const { transplant, tourist, whyQloo, model } = payload;
+  const names = transplant.cards.map((card) => card.name);
+  const activeRefinements = new Set(exchange.refinements);
 
   return (
-    <main className="hero-shell">
-      <header className="hero-header">
-        <h1>
-          <TextReveal text="ELSEWHERE" />
-        </h1>
-        <p>Feel at home, elsewhere.</p>
-      </header>
-
-      <motion.div
-        id="taste-banner"
-        role="status"
-        className="taste-banner"
-        initial={{ opacity: 0.4 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.2 }}
-      >
-        {city
-          ? `transplanting *this you* → ${city}`
-          : "transplanting *this you* → pick a city"}
-      </motion.div>
-
-      <section id="hero" aria-label="Transplant your taste">
-        <div className="field">
-          <label htmlFor="prompt-input">What does home feel like?</label>
-          <PromptInput
-            id="prompt-input"
-            value={prompt}
-            onValueChange={setPrompt}
-            onSubmit={() => void onSubmit()}
-            loading={submitting}
-            placeholder="What does home feel like? e.g. Asake, owambe parties, 2am shawarma"
-            aria-label="What does home feel like?"
-          />
-        </div>
-
-        {confirmations.some(
-          (entry) =>
-            entry.candidates.length === 0 ||
-            entry.candidates.some((cand) => !dismissed.includes(cand.entity_id)),
-        ) && (
-          <div id="approval-pills" aria-live="polite">
-            {confirmations.flatMap((entry) =>
-              entry.candidates.length === 0
-                ? [
-                    <p key={`empty-${entry.text}`} className="approval-empty">
-                      No match for &ldquo;{entry.text}&rdquo; — try chips
-                    </p>,
-                  ]
-                : entry.candidates
-                    .filter((cand) => !dismissed.includes(cand.entity_id))
-                    .map((cand) => {
-                      const pct =
-                        typeof cand.confidence === "number" &&
-                        Number.isFinite(cand.confidence)
-                          ? Math.round(cand.confidence * 100)
-                          : null;
-                      return (
-                        <span
-                          key={cand.entity_id}
-                          className="approval-pill"
-                          data-confirmation-text={entry.text}
-                          data-confirmation-id={cand.entity_id}
-                        >
-                          <ApprovalCard
-                            title={cand.name}
-                            description={
-                              pct === null
-                                ? `${cand.name} · match`
-                                : `${cand.name} · ${pct}% match`
-                            }
-                            className="approval-beui"
-                          >
-                            <span className="approval-actions">
-                              <button
-                                type="button"
-                                data-confirm="true"
-                                onClick={() => confirmCandidate(cand.entity_id)}
-                              >
-                                Confirm
-                              </button>
-                              <button
-                                type="button"
-                                data-skip="true"
-                                onClick={() => skipCandidate(cand.entity_id)}
-                              >
-                                Skip
-                              </button>
-                            </span>
-                          </ApprovalCard>
-                        </span>
-                      );
-                    }),
-            )}
-          </div>
-        )}
-
-        <MultiSelect value={selected} onValueChange={setSelected}>
-        <div className="field">
-          <h2 id="chips-heading">Taste chips</h2>
-          <p className="hint">Tap 3–5 tastes that feel like home.</p>
-          <div id="selected-tokens" aria-live="polite">
-            {selectedChips.length === 0 ? (
-              <span className="tokens-empty">No tastes picked yet.</span>
-            ) : (
-              <>
-                <MultiSelectValue chipClassName="token">
-                  {(value, label) => (
-                    <TokenLabel value={value} label={label} />
-                  )}
-                </MultiSelectValue>
-                <button
-                  type="button"
-                  className="tokens-clear"
-                  onClick={() => setSelected([])}
-                >
-                  Clear
-                </button>
-              </>
-            )}
-          </div>
-          <div id="chips" aria-labelledby="chips-heading">
-            {grouped.map((group) => (
-              <div
-                key={group.category}
-                className="chip-group"
-                data-chip-group={group.category}
-              >
-                <h3>{group.category}</h3>
-                <div role="group" aria-label={group.category}>
-                  {group.items.map((chip) => {
-                    const isOn = selected.includes(chip.entity_id);
-                    return (
-                      <span
-                        key={chip.entity_id}
-                        data-entity-id={chip.entity_id}
-                        data-selected={isOn ? "true" : "false"}
-                        aria-pressed={isOn}
-                      >
-                        <MultiSelectItem
-                          value={chip.entity_id}
-                          textValue={chip.label}
-                          keywords={[chip.category]}
-                          className={isOn ? "chip chip-on" : "chip"}
-                        >
-                          {chip.label}
-                        </MultiSelectItem>
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        </MultiSelect>
-
-        <Combobox
-          open={cityOpen}
-          onOpenChange={(next) => {
-            if (next) {
-              setCityOpen(true);
-              return;
-            }
-            // Mirror the blur-commit: a typed value left in the box becomes
-            // the city. Reads the pre-clear render value because the provider
-            // clears its query (scheduled) just before this fires.
-            const pending = cityQuery.trim();
-            if (pending) setCity(pending);
-            queryRef.current = "";
-            setCityQuery("");
-            setCityOpen(false);
-            setHighlight(-1);
-          }}
-          query={cityQuery}
-          onQueryChange={(next) => {
-            queryRef.current = next;
-            setCityQuery(next);
-            setHighlight(-1);
-          }}
-          value={city}
-          onValueChange={(next) => chooseCity(next)}
-        >
-        <div className="field combobox-field">
-          <label htmlFor="city-input">City</label>
-          <ComboboxInput
-            id="city-input"
-            ref={(el) => {
-              // ComboboxInput stamps its own generated id/aria-controls after
-              // the props spread, so restore the frozen contract attributes
-              // (label htmlFor + combobox semantics point at #city-list).
-              if (el) {
-                el.id = "city-input";
-                el.setAttribute("aria-controls", "city-list");
-              }
-            }}
-            aria-label="City"
-            autoComplete="off"
-            placeholder="Pick a city… e.g. London"
-            onFocus={openCityList}
-            onBlur={onCityBlur}
-            onKeyDown={onCityKeyDown}
-            className="city-beui"
-          />
-          {/* Hidden option registrations so the closed input shows the city
-              label; the visible list below stays custom for free search.
-              The current city gets its own registration when free-typed. */}
-          <span aria-hidden="true" hidden>
-            {cities.map((name) => (
-              <ComboboxItem key={name} value={name} textValue={name}>
-                {name}
-              </ComboboxItem>
-            ))}
-            {city && !cities.includes(city) && (
-              <ComboboxItem key={city} value={city} textValue={city}>
-                {city}
-              </ComboboxItem>
-            )}
-          </span>
-          <ul
-            id="city-list"
-            role="listbox"
-            aria-label="Cities"
-            hidden={!cityOpen}
-          >
-            {visibleCities.map((name, index) => (
-              <li
-                key={name}
-                id={`city-option-${name}`}
-                role="option"
-                aria-selected={name === city}
-                data-city-option={name}
-                data-highlighted={index === highlight ? "true" : "false"}
-                className={
-                  index === highlight ? "city-option hot" : "city-option"
-                }
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  chooseCity(name);
-                }}
-              >
-                {name}
-              </li>
-            ))}
-            {cityOpen && trimmedQuery && !hasExactMatch && (
-              <li
-                role="option"
-                aria-selected="false"
-                data-city-option-free="true"
-                className="city-option free"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  chooseCity(trimmedQuery);
-                }}
-              >
-                Use &ldquo;{trimmedQuery}&rdquo;
-              </li>
-            )}
-          </ul>
-        </div>
-        </Combobox>
-
-        {seedPairs.length > 0 && (
-          <div id="seed-pairs" role="group" aria-label="Seeded pairs">
-            {seedPairs.map((pair) => (
-              <button
-                key={`${pair.from_home}-${pair.dest_city}`}
-                type="button"
-                className="seed-pair-btn"
-                data-seed-pair={pair.dest_city}
-                data-from-home={pair.from_home}
-                onClick={() => onSeedPair(pair)}
-              >
-                {pair.from_home}{" \u2192 "}{pair.dest_city}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div className="field">
-          <button
-            id="transplant-submit"
-            type="button"
-            onClick={onSubmit}
-            disabled={submitting}
-          >
-            {submitting ? (
-              <>
-                <Loader variant="dots" size={16} label="Transplanting" />
-                {"Transplanting\u2026"}
-              </>
-            ) : (
-              "Transplant me"
-            )}
-          </button>
-          <p id="transplant-status" role="status" data-status={statusPath}>
-            {STATUS_COPY[statusPath]}
-          </p>
-        </div>
-      </section>
-
-      <section id="reveal" aria-label="Tourist versus transplant" hidden={!revealed}>
-        <div id="agent-activity" aria-live="polite" data-stream-reader="streamAgui">
-          <p className="agent-activity-head">
-            Agent activity{streaming ? " · live" : ""}
-          </p>
-          <AgentActivity
-            items={activities.map((activity) => ({
-              id: activity.toolCallId,
-              type: "tool",
-              action: "run",
-              target: activity.toolCallName,
-            }))}
-            status={streaming ? "working" : "complete"}
-            contentType="tool"
-            collapseOnComplete={false}
-            activeLabel="Running transplant tools…"
-            className="agent-activity-beui"
-          />
-          {streaming && activities.length === 0 && (
-            <ThinkingShimmer>Contacting the transplant agent…</ThinkingShimmer>
-          )}
-          {activities.map((activity) => (
-            <div
-              key={activity.toolCallId}
-              className="agent-activity-row"
-              data-tool-call={activity.toolCallName}
-            >
-              <span className="agent-activity-name">{activity.toolCallName}</span>
-              <span className="agent-activity-state">
-                {activity.done ? "done" : "running"}
-              </span>
-            </div>
-          ))}
-        </div>
-        <div id="tourist-pane">
-          <h2>Tourist</h2>
-          <p id="tourist-summary">{reveal?.tourist.summary ?? ""}</p>
-          <ul>
-            {(reveal?.tourist.items ?? []).map((item, index) => (
-              <li key={`${index}-${item}`} className="tourist-row">
+    <div id="reveal">
+      {exchange.notices.length > 0 && (
+        <p id="notices">{exchange.notices.join(" · ")}</p>
+      )}
+      <div className="comparison">
+        <section id="tourist-pane" aria-label="What a generic LLM says">
+          <div className="col-label">What a generic LLM says</div>
+          <p id="tourist-summary">{tourist.summary}</p>
+          <div className="tourist-list">
+            {tourist.items.map((item) => (
+              <p key={item} className="tourist-row">
                 {item}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div id="transplant-pane">
-          <h2>Transplant</h2>
-          <p id="transplant-summary">{reveal?.transplant.summary ?? ""}</p>
-          <div id="refinement-pills" role="group" aria-label="Refinements">
-            <OverflowActions
-              primaryActions={[
-                {
-                  id: "late-night",
-                  label: (
-                    <span
-                      data-refinement="late-night"
-                      aria-pressed={refinements.includes("late-night")}
-                    >
-                      more late-night
-                    </span>
-                  ),
-                  onClick: () => toggleRefinement("late-night"),
-                },
-                {
-                  id: "cheaper",
-                  label: (
-                    <span
-                      data-refinement="cheaper"
-                      aria-pressed={refinements.includes("cheaper")}
-                    >
-                      cheaper
-                    </span>
-                  ),
-                  onClick: () => toggleRefinement("cheaper"),
-                },
-              ]}
-              overflowActions={[]}
-              classNames={{ toggle: "refinement-overflow-toggle" }}
-            />
-          </div>
-          <p id="notices">{notices.join(" ")}</p>
-          {reveal && (
-            <TransplantMap
-              center={reveal.transplant.map_center}
-              pins={reveal.transplant.map_pins}
-              names={cardNames}
-              onPinClick={onPinClick}
-            />
-          )}
-          <div id="brands" data-testid="brand-kicker-row" aria-label="Brand kickers">
-            {(reveal?.transplant.brands ?? []).map((brand) => (
-              <span key={brand} className="brand-kicker">
-                {brand}
-              </span>
+              </p>
             ))}
           </div>
-          {reveal && (
-            <Collapsible open={whyOpen} onOpenChange={setWhyOpen} className="why-strip">
-              <CollapsibleTrigger className="why-toggle">
-                Why Qloo won
-              </CollapsibleTrigger>
-              {whyOpen && (
-                <CollapsibleContent>
-                  <div id="why-qloo-body" className="why-body">
-                    <p className="why-path">
-                      {(reveal.whyQloo?.pathSentence ||
-                        (reveal.transplant.cards[0]?.taste_path ?? []).filter(
-                          (entry): entry is string => typeof entry === "string" && entry.length > 0,
-                        ).join(" \u2192 ") ||
-                        `${city.trim() || DEFAULT_CITY} \u2192 your crowd \u2192 ${(reveal.transplant.cards[0]?.name || city.trim() || DEFAULT_CITY)}`)}
-                    </p>
-                    <ToolResult
-                      tool="qloo/v2/insights"
-                      title="Qloo query"
-                      status="success"
-                      kind="request"
-                      contentClassName="why-query"
-                    >
-                      <ToolResultOutput language="text">
-                        {(reveal.whyQloo?.query ||
-                          `filter.type=urn:entity:place&filter.location.query=${encodeURIComponent(city.trim() || DEFAULT_CITY)}&feature.explainability=true&take=8`)}
-                      </ToolResultOutput>
-                    </ToolResult>
-                  </div>
-                </CollapsibleContent>
-              )}
-              <Tooltip content="Reveal that both panes share one model">
-                <span className="honesty-wrap">
-                  <Switch
-                    checked={honestyOn}
-                    onCheckedChange={setHonestyOn}
-                    label="honesty check: same model?"
-                  />
+          <p className="col-footnote">Same model, no taste graph — deliberately plain.</p>
+        </section>
+        <section id="transplant-pane" aria-label="Where your people gather">
+          <div className="col-label">Where your people gather</div>
+          <p id="transplant-summary">{transplant.summary}</p>
+          <div id="refinements" aria-label="Refine the search">
+            {["more late-night", "cheaper"].map((label) => {
+              const refinement = label === "more late-night" ? "late-night" : label;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  className="refinement-pill"
+                  data-refinement={refinement}
+                  aria-pressed={activeRefinements.has(refinement)}
+                  onClick={() => onRefinement(refinement)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <TransplantMap
+            center={transplant.map_center}
+            pins={transplant.map_pins}
+            names={names}
+            onPinClick={onPinClick}
+          />
+          {transplant.brands.length > 0 && (
+            <div id="brands" className="brand-kicker-row" aria-label="Brand kickers">
+              {transplant.brands.map((brand) => (
+                <span key={brand} className="brand-kicker">
+                  {brand}
                 </span>
-              </Tooltip>
-              {honestyOn && (
-                <p className="honesty-line">both panes: {reveal.model ?? DEFAULT_MODEL}</p>
-              )}
-              {!!reveal.broadened && (
-                <Alert variant="warning" role="alert" className="alert">
-                  <AlertIcon />
-                  <AlertContent>broadened search to fill results</AlertContent>
-                </Alert>
-              )}
-            </Collapsible>
+              ))}
+            </div>
           )}
           <div className="transplant-grid">
-            {(reveal?.transplant.cards ?? []).slice(0, 5).map((card, index) => {
-              const chain = (card.taste_path ?? []).filter(
-                (entry): entry is string =>
-                  typeof entry === "string" && entry.length > 0,
-              );
+            {transplant.cards.slice(0, 5).map((card, index) => {
+              const chain = (card.taste_path ?? []).filter(Boolean);
               const chainText = chain.join(" \u2192 ");
               return (
                 <article
@@ -1671,27 +795,14 @@ export default function App() {
                   data-highlighted={highlighted === index ? "true" : "false"}
                   data-entity-id={card.entity_id || `urn:entity:place:card-${index}`}
                 >
-                  <Card className="transplant-card-beui">
+                  <Card size="compact" className="transplant-card-beui">
                     <h3>{card.name}</h3>
                     <AffinityBadge value={card.affinity_multiplier ?? 1.0} />
                     <p className="why-you">{card.why_you ?? card.whyYou ?? ""}</p>
                     <p className="taste-path" aria-label={chainText}>
                       {chainText}
                     </p>
-                    {chain.length > 0 && (
-                      <CitationList
-                        citations={chain.map((part, partIndex) => ({
-                          id: `${card.entity_id || `card-${index}`}-${partIndex}`,
-                          title: part,
-                        }))}
-                        idPrefix={`taste-${index}`}
-                        className="taste-cites"
-                      />
-                    )}
-                    <p
-                      className="entity-id"
-                      data-testid="entity-id"
-                    >
+                    <p className="entity-id" data-testid="entity-id">
                       {card.entity_id || `urn:entity:place:card-${index}`}
                     </p>
                   </Card>
@@ -1699,8 +810,1585 @@ export default function App() {
               );
             })}
           </div>
+        </section>
+      </div>
+      {exchange.confirmations.length > 0 && (
+        <div id="approval-pills">
+          {exchange.confirmations.map((confirmation) => (
+            <div
+              key={confirmation.text}
+              className="approval-pill"
+              data-confirmation-text={confirmation.text}
+            >
+              <span>
+                <span className="approval-name">
+                  {confirmation.candidates[0].name}
+                </span>{" "}
+                <span className="approval-confidence">
+                  {confirmation.candidates[0].confidence !== undefined
+                    ? `· ${Math.round(confirmation.candidates[0].confidence * 100)}% match`
+                    : ""}
+                </span>
+              </span>
+              <span className="approval-actions">
+                <button type="button" data-confirm onClick={() => onSkipCandidate(`__keep__${confirmation.text}`)}>
+                  Confirm
+                </button>
+                <button type="button" data-skip onClick={() => onSkipCandidate(confirmation.text)}>
+                  Skip
+                </button>
+              </span>
+            </div>
+          ))}
         </div>
-      </section>
+      )}
+      <Collapsible open={whyOpen} onOpenChange={setWhyOpen} className="why-strip">
+        <CollapsibleTrigger className="why-toggle">
+          <span>Why this beats a list — the Qloo evidence</span>
+          <ChevronDown className="size-4" aria-hidden="true" />
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="why-strip-body">
+            <p className="why-path">{whyQloo.tastePath}</p>
+            <p className="why-query">{whyQloo.qlooQuery}</p>
+            <div className="honesty-toggle">
+              <Tooltip content="Both summaries come from the same model — only the evidence differs.">
+                <Switch
+                  checked={honestyOn}
+                  onCheckedChange={setHonestyOn}
+                  aria-label="honesty check: same model?"
+                />
+              </Tooltip>
+              <span>honesty check: same model?</span>
+            </div>
+            {honestyOn && <p className="honesty-line">both panes: {model}</p>}
+            {payload.broadened && (
+              <div className="alert" role="alert">
+                <span>broadened search to fill results</span>
+              </div>
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Onboarding screen                                                   */
+/* ------------------------------------------------------------------ */
+
+interface OnboardingProps {
+  chips: Chip[];
+  cities: CityOption[];
+  selected: string[];
+  labelMap: Record<string, string>;
+  city: string;
+  prompt: string;
+  submitting: boolean;
+  related: TasteHit[];
+  relatedLoading: boolean;
+  hasChat: boolean;
+  onToggleChip: (entityId: string) => void;
+  onClearChips: () => void;
+  onAddTaste: (entityId: string, label: string) => void;
+  onCityChange: (city: string) => void;
+  onPromptChange: (prompt: string) => void;
+  /** Submit with a city override — the typed combobox text, when the user
+   *  never pressed Enter or picked an option. */
+  onSubmit: (cityOverride?: string) => void;
+  onBackToChat: () => void;
+}
+
+/** The correlated-suggestions row, shared by every wizard step. While the
+ *  Qloo call runs in the background the pills render as pulsing skeletons,
+ *  so the row is never blank and the fill-in is visible. */
+function SuggestionsRow({
+  related,
+  loading,
+  onAddTaste,
+}: {
+  related: TasteHit[];
+  loading: boolean;
+  onAddTaste: (entityId: string, label: string) => void;
+}) {
+  if (!loading && related.length === 0) return null; // upstream down AND nothing cached
+  return (
+    <div id="suggested-tastes" aria-label="You might also like" aria-busy={loading}>
+      <span className="suggested-caption">
+        People into your picks also like
+        {loading && <Loader size={11} className="suggested-loader" />}
+      </span>
+      <div className="suggested-row">
+        {loading && related.length === 0
+          ? [5.5, 4, 6.5, 4.5, 5].map((width, index) => (
+              <span
+                key={index}
+                className="suggested-pill suggested-pill-skeleton"
+                style={{ width: `${width}rem` }}
+              />
+            ))
+          : related.map((hit) => (
+              <button
+                key={hit.entity_id}
+                type="button"
+                className="suggested-pill"
+                data-suggested={hit.label}
+                onClick={() => onAddTaste(hit.entity_id, hit.label)}
+              >
+                + {hit.label}
+              </button>
+            ))}
+      </div>
+    </div>
+  );
+}
+
+/** One wizard section: this category's chips plus its own custom-taste
+ *  search so every bullet can take custom entries. Remounts per step
+ *  (keyed), so its search box starts empty each section. */
+function CategoryStep({
+  category,
+  chips,
+  selected,
+  related,
+  relatedLoading,
+  onToggleChip,
+  onAddTaste,
+}: {
+  category: string;
+  chips: Chip[];
+  selected: string[];
+  related: TasteHit[];
+  relatedLoading: boolean;
+  onToggleChip: (entityId: string) => void;
+  onAddTaste: (entityId: string, label: string) => void;
+}) {
+  const [tasteQuery, setTasteQuery] = useState("");
+  const [tasteResults, setTasteResults] = useState<TasteHit[]>([]);
+  const [tasteSearching, setTasteSearching] = useState(false);
+
+  // Search-as-you-type: any free text becomes a real Qloo entity.
+  useEffect(() => {
+    const query = tasteQuery.trim();
+    if (query.length < 2) {
+      setTasteResults([]);
+      setTasteSearching(false);
+      return;
+    }
+    setTasteSearching(true);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`/api/search_tastes?q=${encodeURIComponent(query)}`, {
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => setTasteResults(toTasteHits(data?.results).slice(0, 6)))
+        .catch(() => {
+          /* aborted or offline: keep whatever row state is showing */
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setTasteSearching(false);
+        });
+    }, 300);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [tasteQuery]);
+
+  const group = chips.filter((chip) => chip.category === category);
+  return (
+    <section className="onboarding-field" aria-label={`${category} tastes`}>
+      <div id="chips">
+        <div className="chip-group-label">{category}</div>
+        <div className="chip-row" role="group" aria-label={`${category} chips`}>
+          {group.map((chip) => {
+            const isOn = selected.includes(chip.entity_id);
+            return (
+              <button
+                key={chip.entity_id}
+                type="button"
+                className={isOn ? "chip chip-on" : "chip"}
+                data-entity-id={chip.entity_id}
+                data-selected={isOn ? "true" : "false"}
+                aria-pressed={isOn}
+                onClick={() => onToggleChip(chip.entity_id)}
+              >
+                {chip.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="taste-search">
+        <input
+          id="taste-search"
+          type="text"
+          autoComplete="off"
+          placeholder={`Or search any ${category.toLowerCase()} taste — artists, dishes, brands…`}
+          value={tasteQuery}
+          onChange={(event) => setTasteQuery(event.target.value)}
+          aria-label={`Search any ${category.toLowerCase()} taste`}
+        />
+        {tasteQuery.trim().length >= 2 && (
+          <div className="taste-search-results" role="listbox" aria-label="Search results">
+            {tasteResults.map((hit) => (
+              <button
+                key={hit.entity_id}
+                type="button"
+                role="option"
+                aria-selected={false}
+                className="taste-hit"
+                data-taste-hit={hit.label}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  onAddTaste(hit.entity_id, hit.label);
+                  setTasteQuery("");
+                  setTasteResults([]);
+                }}
+              >
+                <span className="taste-hit-label">{hit.label}</span>
+                {hit.type && <span className="taste-hit-type">{hit.type}</span>}
+              </button>
+            ))}
+            {tasteResults.length === 0 && (
+              <p className="taste-search-empty">
+                {tasteSearching ? "Searching Qloo…" : "Nothing in the graph yet"}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+      <SuggestionsRow related={related} loading={relatedLoading} onAddTaste={onAddTaste} />
+    </section>
+  );
+}
+
+function Onboarding({
+  chips,
+  cities,
+  selected,
+  labelMap,
+  city,
+  prompt,
+  submitting,
+  related,
+  relatedLoading,
+  hasChat,
+  onToggleChip,
+  onClearChips,
+  onAddTaste,
+  onCityChange,
+  onPromptChange,
+  onSubmit,
+  onBackToChat,
+}: OnboardingProps) {
+  const [step, setStep] = useState(0);
+  const [cityOpen, setCityOpen] = useState(false);
+  const [cityQuery, setCityQuery] = useState("");
+  const [geo, setGeo] = useState<{ state: "checking" | "ok" | "unknown"; label: string } | null>(
+    null,
+  );
+
+  const labelFor = useCallback(
+    (entityId: string) =>
+      chips.find((chip) => chip.entity_id === entityId)?.label ??
+      labelMap[entityId] ??
+      entityId,
+    [chips, labelMap],
+  );
+
+  const selectedLabels = selected.map(labelFor).filter(Boolean);
+  const canSubmit = (selected.length > 0 || prompt.trim().length > 0) && !submitting;
+  const isFinalStep = step >= CATEGORIES.length;
+
+  // Geocode status while typing a city — instant dictionary hits first.
+  useEffect(() => {
+    const query = cityQuery.trim();
+    if (cityQuery.length < 2) {
+      setGeo(null);
+      return;
+    }
+    setGeo({ state: "checking", label: query });
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`/api/geocode?name=${encodeURIComponent(query)}`, {
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          if (data?.found) {
+            setGeo({
+              state: "ok",
+              label: data.country ? `${data.name}, ${data.country}` : data.name,
+            });
+          } else {
+            setGeo({ state: "unknown", label: query });
+          }
+        })
+        .catch(() => {
+          /* aborted: leave the last status standing */
+        });
+    }, 350);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [cityQuery]);
+
+  const commitCity = (value: string) => {
+    onCityChange(value.trim());
+    setCityQuery("");
+    setCityOpen(false);
+    setGeo(null);
+  };
+
+  /** Submit button path: an uncommitted typed city rides along — a user
+   *  typing "Tokyo" and hitting Transplant me must never get London. */
+  const handleOnboardSubmit = () => {
+    const typed = cityQuery.trim();
+    const override = typed || undefined;
+    if (typed) {
+      onCityChange(typed);
+      setCityOpen(false);
+      setGeo(null);
+    }
+    onSubmit(override);
+  };
+
+  const filteredCities = cities.filter((option) => {
+    const needle = cityQuery.trim().toLowerCase();
+    return (
+      option.value.toLowerCase().includes(needle) ||
+      option.label.toLowerCase().includes(needle)
+    );
+  });
+  const showFreeCity =
+    cityQuery.trim().length > 0 &&
+    !cities.some((option) => option.value.toLowerCase() === cityQuery.trim().toLowerCase());
+
+  return (
+    <main className="onboarding-shell">
+      <div className="theme-toggle-slot">
+        <ThemeToggle variant="circle" />
+      </div>
+      <div className="onboarding-card">
+        {hasChat && (
+          <button
+            type="button"
+            id="back-to-chat"
+            className="back-to-chat"
+            onClick={onBackToChat}
+          >
+            ← Back to chat
+          </button>
+        )}
+        <header className="onboarding-header">
+          <div className="volt-logo-tile volt-logo-lg volt-glow" aria-hidden="true">
+            <Plane className="h-7 w-7" />
+          </div>
+          <h1 style={{ margin: 0 }}>
+            <TextReveal text="ELSEWHERE" />
+          </h1>
+          <p className="onboarding-tagline">Feel at home, elsewhere.</p>
+          <p className="volt-mono-cap">grounded by qloo · live taste graph</p>
+        </header>
+
+        <div className="step-dots" role="tablist" aria-label="Onboarding steps">
+          {[...CATEGORIES, "Go"].map((name, index) => (
+            <button
+              key={name}
+              type="button"
+              role="tab"
+              aria-label={`Step ${index + 1}: ${name}`}
+              aria-current={index === step ? "step" : undefined}
+              className={
+                index === step
+                  ? "step-dot step-dot-on"
+                  : index < step
+                    ? "step-dot step-dot-done"
+                    : "step-dot"
+              }
+              onClick={() => setStep(index)}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+        <p className="onboarding-step-label" aria-live="polite">
+          {isFinalStep
+            ? "Where did you land?"
+            : `${CATEGORIES[step]} — what do you love?`}
+        </p>
+
+        {selectedLabels.length > 0 && (
+          <div id="selected-tokens">
+            {selectedLabels.map((label, index) => (
+              <span key={selected[index]} className="token">
+                {label}
+                <button
+                  type="button"
+                  data-token-remove
+                  aria-label={`Remove ${label}`}
+                  onClick={() => onToggleChip(selected[index])}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {isFinalStep ? (
+          <>
+            <SuggestionsRow related={related} loading={relatedLoading} onAddTaste={onAddTaste} />
+            <div className="onboarding-field">
+              <label className="onboarding-label" htmlFor="prompt-input">
+                Anything else home feels like? (optional)
+              </label>
+              <PromptInput
+                id="prompt-input"
+                placeholder="e.g. Afrobeats, late-night ramen, jazz clubs…"
+                value={prompt}
+                onValueChange={onPromptChange}
+                onSubmit={() => {
+                  if (canSubmit) handleOnboardSubmit();
+                }}
+                maxRows={3}
+                aria-label="What does home feel like?"
+              />
+            </div>
+
+            <div className="onboarding-field">
+          <label className="onboarding-label" htmlFor="city-input">
+            City you just landed in — anywhere
+          </label>
+          <input
+            id="city-input"
+            role="combobox"
+            aria-expanded={cityOpen}
+            aria-controls="city-list"
+            autoComplete="off"
+            placeholder="Type any city on earth"
+            value={cityOpen ? cityQuery : city}
+            onChange={(event) => {
+              setCityQuery(event.target.value);
+              setCityOpen(true);
+            }}
+            onFocus={() => {
+              setCityQuery("");
+              setCityOpen(true);
+            }}
+            onBlur={() => {
+              window.setTimeout(() => setCityOpen(false), 120);
+            }}
+            onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+              if (event.key === "Enter") {
+                const first = filteredCities[0];
+                commitCity(cityQuery.trim() ? (showFreeCity ? cityQuery : first?.value ?? city) : city);
+              }
+              if (event.key === "Escape") setCityOpen(false);
+            }}
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius)",
+              background: "var(--card)",
+              color: "var(--foreground)",
+              padding: "0.55rem 0.7rem",
+              width: "100%",
+            }}
+          />
+          {geo && cityOpen && (
+            <p className="city-geocode-line" data-state={geo.state} aria-live="polite">
+              {geo.state === "ok"
+                ? `✓ ${geo.label}`
+                : geo.state === "checking"
+                  ? "Checking the map…"
+                  : `Can't place “${geo.label}” yet — Qloo may still know it`}
+            </p>
+          )}
+          {cityOpen && (
+            <ul id="city-list" role="listbox" aria-label="Cities">
+              {filteredCities.slice(0, 8).map((option) => (
+                <li
+                  key={option.value}
+                  role="option"
+                  aria-selected={option.value === city}
+                  className="city-option"
+                  data-city-option={option.value}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    commitCity(option.value);
+                  }}
+                >
+                  {option.label}
+                </li>
+              ))}
+              {showFreeCity && (
+                <li
+                  role="option"
+                  aria-selected={false}
+                  className="city-option"
+                  data-city-option={cityQuery}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    commitCity(cityQuery);
+                  }}
+                >
+                  Use “{cityQuery.trim()}”
+                </li>
+              )}
+            </ul>
+          )}
+        </div>
+
+            <button
+              type="button"
+              id="transplant-submit"
+              className="chat-send-button"
+              disabled={!canSubmit}
+              onClick={handleOnboardSubmit}
+            >
+              {submitting ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                  <Loader size={14} /> Transplanting…
+                </span>
+              ) : (
+                "Transplant me"
+              )}
+            </button>
+            <p id="transplant-status" aria-live="polite">
+              {submitting
+                ? "Transplanting…"
+                : selected.length === 0 && !prompt.trim()
+                  ? "Pick at least one taste or type what home feels like."
+                  : `Transplanting this you → ${city || DEFAULT_CITY}`}
+            </p>
+          </>
+        ) : (
+          <CategoryStep
+            key={CATEGORIES[step]}
+            category={CATEGORIES[step]}
+            chips={chips}
+            selected={selected}
+            related={related}
+            relatedLoading={relatedLoading}
+            onToggleChip={onToggleChip}
+            onAddTaste={onAddTaste}
+          />
+        )}
+
+        <footer className="step-nav">
+          <button
+            type="button"
+            className="step-nav-btn"
+            disabled={step === 0}
+            onClick={() => setStep((s) => Math.max(0, s - 1))}
+          >
+            ← Back
+          </button>
+          <span className="step-count">
+            {step + 1} / {CATEGORIES.length + 1}
+          </span>
+          {step < CATEGORIES.length ? (
+            <button
+              type="button"
+              className="step-nav-btn step-nav-next"
+              onClick={() => setStep((s) => Math.min(CATEGORIES.length, s + 1))}
+            >
+              {step === CATEGORIES.length - 1 ? "Almost there →" : "Continue →"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="step-nav-btn"
+              disabled={selected.length === 0}
+              onClick={onClearChips}
+            >
+              Clear picks
+            </button>
+          )}
+        </footer>
+      </div>
     </main>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* App root                                                            */
+/* ------------------------------------------------------------------ */
+
+export default function App() {
+  const [chips, setChips] = useState<Chip[]>(FALLBACK_CHIPS);
+  const [cities, setCities] = useState<CityOption[]>(
+    FALLBACK_CITIES.map((name) => ({ label: name, value: name })),
+  );
+  const bootSession = useRef(loadSession());
+  const [selected, setSelected] = useState<string[]>(
+    () => bootSession.current?.tokens ?? loadTaste().chips,
+  );
+  const [labelMap, setLabelMap] = useState<Record<string, string>>(
+    () => bootSession.current?.labelMap ?? {},
+  );
+  const [city, setCity] = useState<string>(
+    () => bootSession.current?.city || loadTaste().city || DEFAULT_CITY,
+  );
+  const [prompt, setPrompt] = useState<string>(() => loadTaste().prompt);
+  const [screen, setScreen] = useState<"onboarding" | "chat">(() =>
+    hasSession() ? "chat" : "onboarding",
+  );
+  const [exchanges, setExchanges] = useState<Exchange[]>(() =>
+    restoreExchanges(bootSession.current),
+  );
+  const [related, setRelated] = useState<TasteHit[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [highlighted, setHighlighted] = useState<number | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Persist the taste card; storage failure must never break the app.
+  useEffect(() => {
+    saveTaste({ chips: selected, city, prompt });
+  }, [selected, city, prompt]);
+
+  // Persist the live session (results ride as opaque JSON) so a reload
+  // lands back in the chat with everything intact.
+  useEffect(() => {
+    if (submitting) return;
+    const last = exchanges[exchanges.length - 1];
+    if (!last || !last.activityDone) return;
+    saveSession({ tokens: selected, city, labelMap, exchanges: [last] });
+  }, [exchanges, submitting, selected, city, labelMap]);
+
+  // Live catalog first, inlined snapshot as the offline fallback.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/catalog")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: CatalogResponse | null) => {
+        if (cancelled || !data) return;
+        if (isChipList(data.chips)) setChips(data.chips);
+        if (
+          Array.isArray(data.cities) &&
+          data.cities.length >= 12 &&
+          toCityOptions(data.cities).every((option) => option.value)
+        ) {
+          setCities(toCityOptions(data.cities));
+        }
+      })
+      .catch(() => {
+        /* offline or API down: the fallback snapshot stays rendered */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Correlated suggestions: Qloo's "your crowd also likes", refreshed on
+  // every selection change (debounced). Always on: catalog pills fill the
+  // cold start before the first pick, then the row refills personalized —
+  // skeleton pills show while Qloo works in the background.
+  useEffect(() => {
+    const controller = new AbortController();
+    setRelatedLoading(true);
+    const timer = window.setTimeout(() => {
+      fetch("/api/related", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entity_ids: selected.slice(0, 8) }),
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          const known = new Set(selected);
+          setRelated(
+            toTasteHits(data?.results)
+              .filter((hit) => !known.has(hit.entity_id))
+              .slice(0, 10),
+          );
+        })
+        .catch(() => {
+          /* transient: keep the previous suggestion pills */
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setRelatedLoading(false);
+        });
+    }, 600);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [selected]);
+
+  const toggleChip = useCallback((entityId: string) => {
+    setSelected((current) =>
+      current.includes(entityId)
+        ? current.filter((entry) => entry !== entityId)
+        : [...current, entityId],
+    );
+  }, []);
+
+  /** Add a taste from search / suggestions; the label may be unknown to
+   *  the static chip catalog, so it rides in labelMap. */
+  const addTaste = useCallback((entityId: string, label: string) => {
+    setSelected((current) =>
+      current.includes(entityId) ? current : [...current, entityId],
+    );
+    if (label.trim()) {
+      setLabelMap((current) => ({ ...current, [entityId]: label.trim() }));
+    }
+  }, []);
+
+  const patchExchange = useCallback((id: string, patch: Partial<Exchange>) => {
+    setExchanges((current) =>
+      current.map((exchange) =>
+        exchange.id === id ? { ...exchange, ...patch } : exchange,
+      ),
+    );
+  }, []);
+
+  /** Run the transplant; the transcript holds exactly ONE result — every
+   *  run (first, refinement, follow-up) replaces the current one, and the
+   *  prior asks fold into the history trail. SSE first, JSON fallback,
+   *  template floor. */
+  const runExchange = useCallback(
+    async (options: {
+      seeds: Seed[];
+      city: string;
+      refinements: string[];
+      userText: string;
+      metaLine: string;
+    }) => {
+      const exchangeId = newExchangeId();
+      const exchange: Exchange = {
+        id: exchangeId,
+        userText: options.userText,
+        history: [],
+        metaLine: options.metaLine,
+        seeds: options.seeds,
+        city: options.city,
+        refinements: options.refinements,
+        status: "streaming",
+        activities: [],
+        activityDone: false,
+        summaryText: "",
+        payload: null,
+        confirmations: [],
+        notices: [],
+      };
+      setExchanges((current) => {
+        const last = current[current.length - 1];
+        // The one-result model: replace, carrying the prior asks as trail.
+        const carried = last ? [...last.history, last.userText] : [];
+        return [{ ...exchange, history: carried.filter(Boolean).slice(-8) }];
+      });
+      setSubmitting(true);
+      setHighlighted(null);
+
+      const seeds = dedupeSeeds(options.seeds);
+      const body = JSON.stringify({
+        seeds,
+        dest_city: options.city,
+        refinements: options.refinements,
+      });
+      // Stop any in-flight run (new submit or Edit tastes), then own the wire.
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      const controllers = new Set<AbortController>([controller]);
+      abortRef.current = {
+        abort: () => controllers.forEach((entry) => entry.abort()),
+      } as AbortController;
+
+      // Idle watchdog, not a total budget: a cold run legitimately streams
+      // for 30s+ (two LLM pane summaries), and a rate-limited Qloo ladder
+      // blocks 30s+-quiet between rows — so only truly dead streams die.
+      let idleTimer = window.setTimeout(() => controller.abort(), 40000);
+      const resetIdle = () => {
+        window.clearTimeout(idleTimer);
+        idleTimer = window.setTimeout(() => controller.abort(), 40000);
+      };
+
+      const acc: StreamAcc = {
+        cards: undefined,
+        brands: undefined,
+        center: undefined,
+        pins: undefined,
+        touristSummary: "",
+        transplantSummary: "",
+        touristStream: "",
+        touristItems: undefined,
+        root: {},
+      };
+      let streamedConfirmations: Confirmation[] = [];
+      const activityItems: AgentActivityItem[] = [];
+
+      const applyEvent = (event: AguiEvent) => {
+        resetIdle();
+        const type = event.type;
+        if (type === "TEXT_MESSAGE_START" || type === "TEXT_MESSAGE_END") {
+          // The generic lane is tracked via its deltas; nothing to do here.
+          return;
+        }
+        if (type === "TEXT_MESSAGE_CONTENT") {
+          if (event.messageId !== "tourist") return;
+          const delta = typeof event.delta === "string" ? event.delta : event.content;
+          if (typeof delta !== "string" || !delta) return;
+          acc.touristStream += delta;
+          const progressive = toProgressivePayload(acc, options.city);
+          if (progressive) {
+            patchExchange(exchangeId, { payload: progressive, summaryText: progressive.transplant.summary });
+          }
+          return;
+        }
+        if (type === "TOOL_CALL_START") {
+          const item = toolActivityItem(event as Record<string, unknown>, "start");
+          if (item) {
+            activityItems.push(item);
+            patchExchange(exchangeId, { activities: [...activityItems] });
+          }
+          return;
+        }
+        if (type === "TOOL_CALL_END") {
+          const item = toolActivityItem(event as Record<string, unknown>, "end");
+          if (item) {
+            activityItems.push(item);
+            patchExchange(exchangeId, { activities: [...activityItems] });
+          }
+          return;
+        }
+        if (type === "STATE_DELTA" && event.delta && typeof event.delta === "object") {
+          const delta = event.delta as Record<string, unknown>;
+          if (Array.isArray(delta.cards)) acc.cards = delta.cards;
+          if (Array.isArray(delta.brands)) acc.brands = delta.brands;
+          if (Array.isArray(delta.confirmations)) {
+            streamedConfirmations = toConfirmations(delta.confirmations);
+            if (streamedConfirmations.length > 0) {
+              patchExchange(exchangeId, { confirmations: streamedConfirmations });
+            }
+          }
+          if (delta.map_center !== undefined) acc.center = delta.map_center;
+          if (delta.map_pins !== undefined) acc.pins = delta.map_pins;
+          else if (delta.pins !== undefined) acc.pins = delta.pins;
+          if (typeof delta.tourist_summary === "string" && delta.tourist_summary) {
+            acc.touristSummary = delta.tourist_summary;
+          }
+          if (Array.isArray(delta.tourist_items)) acc.touristItems = delta.tourist_items;
+          if (typeof delta.transplant_summary === "string" && delta.transplant_summary) {
+            acc.transplantSummary = delta.transplant_summary;
+          }
+          for (const key of ["why_qloo", "qloo_query", "taste_path_sentence", "model", "broadened", "meta"]) {
+            if (delta[key] !== undefined) acc.root[key] = delta[key];
+          }
+          const progressive = toProgressivePayload(acc, options.city);
+          if (progressive) {
+            patchExchange(exchangeId, { payload: progressive, summaryText: progressive.transplant.summary });
+          }
+          return;
+        }
+        if (type === "STATE_SNAPSHOT" && event.snapshot && typeof event.snapshot === "object") {
+          const snap = event.snapshot as Record<string, unknown>;
+          if (Array.isArray(snap.confirmations)) {
+            streamedConfirmations = toConfirmations(snap.confirmations);
+            if (streamedConfirmations.length > 0) {
+              patchExchange(exchangeId, { confirmations: streamedConfirmations });
+            }
+          }
+          const snapshotPayload = toSnapshotPayload(
+            event.snapshot as Record<string, unknown>,
+            acc.touristSummary,
+            acc.transplantSummary,
+            options.city,
+          );
+          if (snapshotPayload) {
+            acc.root = event.snapshot as Record<string, unknown>;
+            patchExchange(exchangeId, {
+              payload: snapshotPayload,
+              summaryText: snapshotPayload.transplant.summary,
+            });
+          }
+          return;
+        }
+        if (type === "RUN_FINISHED") {
+          patchExchange(exchangeId, { activityDone: true });
+          return;
+        }
+        if (type === "RUN_ERROR") {
+          // Fall through to the JSON path by throwing inside streamAgui's caller.
+          throw new Error("run error");
+        }
+      };
+
+      let adopted = false;
+      try {
+        const response = await fetch("/agui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) throw new Error("agui unavailable");
+        await streamAgui(response, applyEvent);
+        // Adopt whatever the stream produced.
+        const current = acc;
+        const final = toProgressivePayload(current, options.city);
+        patchExchange(exchangeId, {
+          status: "streaming",
+          activityDone: true,
+          ...(final ? { payload: final } : {}),
+        });
+        adopted = true;
+      } catch {
+        adopted = false;
+      } finally {
+        window.clearTimeout(idleTimer);
+      }
+
+      if (!adopted) {
+        // JSON fallback — also the only path for confirmations/notices.
+        // Fresh controller: an aborted SSE stream must not poison this call.
+        const jsonController = new AbortController();
+        controllers.add(jsonController);
+        const jsonTimer = window.setTimeout(() => jsonController.abort(), 45000);
+        try {
+          const response = await fetch("/api/transplant", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+            signal: jsonController.signal,
+          });
+          if (response.ok) {
+            const data = (await response.json()) as Record<string, unknown>;
+            const payload = toRevealPayload(data, options.city);
+            patchExchange(exchangeId, {
+              confirmations: toConfirmations(data.confirmations),
+              notices: toNotices(data.notices),
+              ...(payload
+                ? {
+                    payload,
+                    summaryText: payload.transplant.summary,
+                    status: "json" as const,
+                    activityDone: true,
+                  }
+                : { status: "template" as const, activityDone: true }),
+            });
+            adopted = true;
+          }
+        } catch {
+          adopted = false;
+        } finally {
+          window.clearTimeout(jsonTimer);
+        }
+      }
+
+      if (!adopted) {
+        const base = templateCopy(options.city);
+        patchExchange(exchangeId, {
+          payload: base,
+          summaryText: base.transplant.summary,
+          status: "template",
+          activityDone: true,
+        });
+      }
+      setSubmitting(false);
+      abortRef.current = null;
+    },
+    [patchExchange],
+  );
+
+  const submitOnboarding = useCallback(
+    (cityOverride?: string) => {
+      const chipSeeds: Seed[] = selected;
+      const textSeed: Seed[] = prompt.trim() ? [{ text: prompt.trim() }] : [];
+      const seeds = [...chipSeeds, ...textSeed];
+      if (seeds.length === 0) return;
+      const useCity = (cityOverride || city || DEFAULT_CITY).trim();
+      const labels = selected
+        .map((id) => chips.find((chip) => chip.entity_id === id)?.label ?? labelMap[id] ?? "")
+        .filter(Boolean);
+      const metaLine = [
+        labels.length ? labels.join(", ") : prompt.trim(),
+        `→ ${useCity}`,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const userText = prompt.trim() || labels.join(", ");
+      setScreen("chat");
+      void runExchange({
+        seeds,
+        city: useCity,
+        refinements: [],
+        userText,
+        metaLine,
+      });
+    },
+    [selected, prompt, chips, labelMap, city, runExchange],
+  );
+
+  const submitChatPrompt = useCallback(
+    (value: string) => {
+      const text = value.trim();
+      if (!text || submitting) return;
+      const seeds: Seed[] = [...selected, { text }];
+      const metaLine = `${text} → ${city || DEFAULT_CITY}`;
+      void runExchange({
+        seeds,
+        city: city || DEFAULT_CITY,
+        refinements: [],
+        userText: text,
+        metaLine,
+      });
+    },
+    [selected, city, submitting, runExchange],
+  );
+
+  const runRefinement = useCallback(
+    (refinement: string) => {
+      if (submitting) return;
+      const last = exchanges[exchanges.length - 1];
+      if (!last) return;
+      const label = refinement === "late-night" ? "more late-night" : refinement;
+      void runExchange({
+        seeds: last.seeds,
+        city: last.city,
+        refinements: [refinement],
+        userText: label,
+        metaLine: `${label} → ${last.city}`,
+      });
+    },
+    [exchanges, submitting, runExchange],
+  );
+
+  const skipCandidate = useCallback(
+    (text: string) => {
+      if (submitting || text.startsWith("__keep__")) return;
+      const last = exchanges[exchanges.length - 1];
+      if (!last) return;
+      const seeds = dedupeSeeds(last.seeds).filter(
+        (seed) => !(typeof seed === "object" && seed.text === text),
+      );
+      void runExchange({
+        seeds,
+        city: last.city,
+        refinements: last.refinements,
+        userText: last.userText,
+        metaLine: last.metaLine,
+      });
+    },
+    [exchanges, submitting, runExchange],
+  );
+
+  const onPinClick = useCallback((index: number) => {
+    setHighlighted(index);
+    window.setTimeout(() => {
+      document
+        .querySelector(`.transplant-card[data-index="${index}"]`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }, 50);
+  }, []);
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  const prevRunRef = useRef<string>("");
+  useEffect(() => {
+    const last = exchanges[exchanges.length - 1];
+    if (last && last.id !== prevRunRef.current) {
+      prevRunRef.current = last.id;
+      transcriptRef.current?.scrollTo({
+        top: transcriptRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  }, [exchanges]);
+
+  /** VoltChat "New Chat" analog: abort, wipe the session, back to the wizard. */
+  const startOver = useCallback(() => {
+    abortRef.current?.abort();
+    setSubmitting(false);
+    setSelected([]);
+    setExchanges([]);
+    try {
+      localStorage.removeItem(SESSION_KEY);
+    } catch {
+      /* storage may be unavailable — the state reset still applies */
+    }
+    setScreen("onboarding");
+    setSidebarOpen(false);
+  }, []);
+
+  const sideLabels = selected.map(
+    (id) => chips.find((chip) => chip.entity_id === id)?.label ?? labelMap[id] ?? id,
+  );
+
+  const chatBody = (
+    <div className="chat-inset">
+      <VoltSidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        labels={sideLabels}
+        city={city || DEFAULT_CITY}
+        selected={selected}
+        onRemoveToken={toggleChip}
+        onNewTransplant={() => {
+          abortRef.current?.abort();
+          setSubmitting(false);
+          setScreen("onboarding");
+          setSidebarOpen(false);
+        }}
+        onStartOver={startOver}
+      />
+      <header className="volt-header">
+        <button
+          type="button"
+          className="volt-icon-btn"
+          aria-label={sidebarOpen ? "Close session panel" : "Open session panel"}
+          aria-expanded={sidebarOpen}
+          onClick={() => setSidebarOpen((v) => !v)}
+        >
+          {sidebarOpen ? (
+            <PanelLeftClose className="h-4 w-4" />
+          ) : (
+            <PanelLeft className="h-4 w-4" />
+          )}
+        </button>
+        <div className="volt-logo-tile volt-glow" aria-hidden="true">
+          <Plane className="h-4 w-4" />
+        </div>
+        <div className="volt-app-name">
+          <span className="chat-wordmark">ELSEWHERE</span>
+          <span className="volt-mono-cap">
+            → {city || DEFAULT_CITY} · {selected.length} taste
+            {selected.length === 1 ? "" : "s"}
+          </span>
+        </div>
+        <span className="chat-header-spacer" />
+        <button
+          type="button"
+          className="header-taste-chip"
+          onClick={() => {
+            abortRef.current?.abort();
+            setSubmitting(false);
+            setScreen("onboarding");
+          }}
+          title="Edit your tastes"
+        >
+          {selected.length > 0
+            ? `${selected.length} taste${selected.length > 1 ? "s" : ""}`
+            : "Add tastes"}
+        </button>
+        <ThemeToggle variant="circle" />
+      </header>
+      <div className="chat-transcript" ref={transcriptRef}>
+        <Transcript
+          exchanges={exchanges}
+          highlighted={highlighted}
+          onPinClick={onPinClick}
+          onRefinement={runRefinement}
+          onSkipCandidate={skipCandidate}
+        />
+      </div>
+      <VoltComposer
+        loading={submitting}
+        onSubmit={(value) => submitChatPrompt(value)}
+        onStop={() => {
+          abortRef.current?.abort();
+          setSubmitting(false);
+        }}
+      />
+    </div>
+  );
+
+  return (
+    <>
+      {screen === "onboarding" ? (
+        <Onboarding
+          chips={chips}
+          cities={cities}
+          selected={selected}
+          labelMap={labelMap}
+          city={city}
+          prompt={prompt}
+          submitting={submitting}
+          related={related}
+          relatedLoading={relatedLoading}
+          hasChat={exchanges.length > 0}
+          onToggleChip={toggleChip}
+          onClearChips={() => setSelected([])}
+          onAddTaste={addTaste}
+          onCityChange={setCity}
+          onPromptChange={setPrompt}
+          onSubmit={submitOnboarding}
+          onBackToChat={() => setScreen("chat")}
+        />
+      ) : (
+        chatBody
+      )}
+    </>
+  );
+}
+
+/** Transcript: a centered voltchat column — user asks in a right-aligned
+ *  primary pill, the agent answers full-width (activity rows, streamed
+ *  summary, result card, action row). */
+function Transcript({
+  exchanges,
+  highlighted,
+  onPinClick,
+  onRefinement,
+  onSkipCandidate,
+}: {
+  exchanges: Exchange[];
+  highlighted: number | null;
+  onPinClick: (index: number) => void;
+  onRefinement: (refinement: string) => void;
+  onSkipCandidate: (text: string) => void;
+}) {
+  return (
+    <div className="volt-transcript">
+      {exchanges.map((exchange) => {
+        const trail = exchange.history.filter(
+          (entry, index) => entry && entry !== exchange.userText && exchange.history.indexOf(entry) === index,
+        );
+        const streaming = !exchange.activityDone;
+        return (
+        <div key={exchange.id} className="volt-exchange">
+          <div className="volt-msg-user message-enter">
+            {trail.length > 0 && (
+              <div className="exchange-trail" aria-label="Earlier asks this replaced">
+                {trail.map((entry, index) => (
+                  <span key={`${index}-${entry}`} className="exchange-trail-chip">
+                    {entry}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="volt-user-bubble">
+              <p className="exchange-user-line">{exchange.userText}</p>
+              <p className="exchange-meta">{exchange.metaLine}</p>
+            </div>
+          </div>
+          <div className="volt-msg-assistant message-enter">
+            <div id="agent-activity" aria-label="Agent activity">
+              <ActivityLine
+                items={exchange.activities}
+                done={exchange.activityDone}
+                city={exchange.city}
+              />
+            </div>
+            {!exchange.payload && streaming && (
+              <div className="volt-dots" role="status" aria-label="Thinking">
+                <span className="loading-dot" />
+                <span className="loading-dot" />
+                <span className="loading-dot" />
+              </div>
+            )}
+            {(exchange.summaryText || exchange.payload) && (
+              <div className="volt-assistant-body">
+                <p className={`volt-summary ${streaming ? "cursor-blink" : ""}`}>
+                  {exchange.summaryText}
+                </p>
+                {exchange.payload && (
+                  <ResultCard
+                    exchange={exchange}
+                    highlighted={highlighted}
+                    onPinClick={onPinClick}
+                    onRefinement={onRefinement}
+                    onSkipCandidate={onSkipCandidate}
+                  />
+                )}
+                {!streaming && <VoltActions text={exchange.summaryText} />}
+              </div>
+            )}
+          </div>
+        </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Copy / feedback row under a finished agent answer (voltchat action bar). */
+function VoltActions({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const [thumb, setThumb] = useState<"up" | "down" | null>(null);
+  const copy = () => {
+    if (!text) return;
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+      },
+      () => {
+        /* clipboard unavailable in some contexts — nothing to do */
+      },
+    );
+  };
+  return (
+    <div className="volt-actions" aria-label="Message actions">
+      <Tooltip content={copied ? "Copied" : "Copy summary"}>
+        <button type="button" className="volt-action" onClick={copy} aria-label="Copy summary">
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        </button>
+      </Tooltip>
+      <Tooltip content="Good answer">
+        <button
+          type="button"
+          className={`volt-action ${thumb === "up" ? "volt-action-on" : ""}`}
+          aria-pressed={thumb === "up"}
+          aria-label="Good answer"
+          onClick={() => setThumb((t) => (t === "up" ? null : "up"))}
+        >
+          <ThumbsUp className="h-3.5 w-3.5" />
+        </button>
+      </Tooltip>
+      <Tooltip content="Off the mark">
+        <button
+          type="button"
+          className={`volt-action ${thumb === "down" ? "volt-action-on" : ""}`}
+          aria-pressed={thumb === "down"}
+          aria-label="Off the mark"
+          onClick={() => setThumb((t) => (t === "down" ? null : "down"))}
+        >
+          <ThumbsDown className="h-3.5 w-3.5" />
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+/** One quiet line for the whole agent run: bouncing dots + a mono caption
+ *  while working, an expandable "Ran N tool calls" trace at rest (voltchat
+ *  tool-row styling: status dot + mono name + target). */
+function ActivityLine({
+  items,
+  done,
+  city,
+}: {
+  items: AgentActivityItem[];
+  done: boolean;
+  city: string;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!done) {
+    return (
+      <div className="activity-line" role="status">
+        <span className="activity-caption volt-mono-cap">
+          <span className="volt-status-dot volt-status-running" aria-hidden="true" />
+          {items.length > 0
+            ? `querying ${city}…`
+            : "reading what home feels like…"}
+        </span>
+        <span className="volt-dots" aria-hidden="true">
+          <span className="loading-dot" />
+          <span className="loading-dot" />
+          <span className="loading-dot" />
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="activity-line">
+      {items.length === 0 ? (
+        <span className="activity-summary" role="status">
+          <span className="volt-status-dot volt-status-done" aria-hidden="true" /> Result
+          ready
+        </span>
+      ) : (
+        <>
+          <button
+            type="button"
+            className="activity-summary"
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+          >
+            <span className="volt-status-dot volt-status-done" aria-hidden="true" /> Ran{" "}
+            {items.length} tool
+            {items.length === 1 ? "" : "s"}
+            <ChevronDown className="size-3.5 chev" aria-hidden="true" data-open={open} />
+          </button>
+          {open && (
+            <div className="activity-rows">
+              {items.map((item) =>
+                item.type === "tool" ? (
+                  <div key={item.id} className="agent-activity-row">
+                    <span
+                      className="volt-status-dot volt-status-done"
+                      aria-hidden="true"
+                    />
+                    <span className="activity-tool-name">{item.action}</span>
+                    <span className="activity-tool-target">{item.target}</span>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Collapsible session rail (voltchat sidebar): new-transplant, the live
+ *  picks + city, start-over. Overlay drawer at every size — safe on mobile. */
+function VoltSidebar({
+  open,
+  onClose,
+  labels,
+  city,
+  selected,
+  onRemoveToken,
+  onNewTransplant,
+  onStartOver,
+}: {
+  open: boolean;
+  onClose: () => void;
+  labels: string[];
+  city: string;
+  selected: string[];
+  onRemoveToken: (entityId: string) => void;
+  onNewTransplant: () => void;
+  onStartOver: () => void;
+}) {
+  return (
+    <>
+      <div
+        className={open ? "volt-backdrop open" : "volt-backdrop"}
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <aside
+        className={open ? "volt-sidebar open" : "volt-sidebar"}
+        aria-label="Session panel"
+        aria-hidden={!open}
+      >
+        <div className="volt-side-body">
+          <button type="button" className="volt-new-chat" onClick={onNewTransplant}>
+            <PlusCircle className="h-4 w-4" /> New transplant
+          </button>
+          <h3 className="volt-side-label volt-mono-cap">your picks</h3>
+          {labels.length === 0 ? (
+            <p className="volt-side-empty volt-mono-cap">nothing picked yet</p>
+          ) : (
+            <div id="selected-tokens" className="volt-side-tokens">
+              {labels.map((label, index) => (
+                <span key={selected[index]} className="token">
+                  {label}
+                  <button
+                    type="button"
+                    data-token-remove
+                    aria-label={`Remove ${label}`}
+                    onClick={() => onRemoveToken(selected[index])}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="volt-side-city volt-mono-cap">→ {city}</p>
+        </div>
+        <div className="volt-side-foot">
+          <p className="volt-mono-cap">
+            <span className="volt-status-dot volt-status-done" aria-hidden="true" /> live ·
+            qloo grounded
+          </p>
+          <button
+            type="button"
+            className="volt-action volt-start-over"
+            onClick={onStartOver}
+            disabled={labels.length === 0}
+          >
+            Start over
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+/** voltchat composer: glass card with glow-on-focus, round send button,
+ *  mono hint row. Enter sends; Shift+Enter is a newline. */
+function VoltComposer({
+  loading,
+  onSubmit,
+  onStop,
+}: {
+  loading: boolean;
+  onSubmit: (value: string) => void;
+  onStop: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+  const canSend = value.trim().length > 0 && !loading;
+
+  const submit = () => {
+    const text = value.trim();
+    if (!text || loading) return;
+    onSubmit(text);
+    setValue("");
+    window.setTimeout(() => {
+      if (areaRef.current) areaRef.current.style.height = "auto";
+    }, 0);
+  };
+
+  const autosize = () => {
+    const area = areaRef.current;
+    if (!area) return;
+    area.style.height = "auto";
+    area.style.height = `${Math.min(area.scrollHeight, 200)}px`;
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      submit();
+    }
+  };
+
+  return (
+    <div className="volt-composer-wrap">
+      <div className="volt-composer">
+        <div className="volt-composer-card">
+          <textarea
+            ref={areaRef}
+            className="volt-composer-input"
+            placeholder="Say what home feels like — or refine: more late-night, cheaper…"
+            value={value}
+            rows={1}
+            onChange={(event) => {
+              setValue(event.target.value);
+              autosize();
+            }}
+            onKeyDown={onKeyDown}
+            aria-label="Chat with the transplant agent"
+          />
+          {loading ? (
+            <button
+              type="button"
+              className="volt-send volt-send-stop"
+              onClick={onStop}
+              aria-label="Stop generating"
+            >
+              <Square className="h-3.5 w-3.5" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="volt-send"
+              disabled={!canSend}
+              onClick={submit}
+              aria-label="Send message"
+            >
+              <ArrowUp className="h-5 w-5" strokeWidth={2.5} />
+            </button>
+          )}
+        </div>
+        <p className="volt-hints volt-mono-cap" aria-hidden="true">
+          <span>↵ to send</span>
+          <span className="volt-hint-sep">·</span>
+          <span>Shift+↵ for newline</span>
+        </p>
+      </div>
+    </div>
   );
 }

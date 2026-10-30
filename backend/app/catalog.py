@@ -1,4 +1,4 @@
-"""Disk-backed config catalog: chips, cities, seed pairs."""
+"""Disk-backed config catalog: chips and cities."""
 
 import json
 from pathlib import Path
@@ -13,17 +13,11 @@ def _load(name: str):
 
 _CHIPS = _load("chips.json")
 _CITIES = _load("cities.json")
-_SEED_PAIRS = _load("seed_pairs.json")
 
 
 def get_catalog() -> dict:
     """Return {"chips": [...], "cities": [...]} from disk (loaded once)."""
     return {"chips": _CHIPS, "cities": _CITIES}
-
-
-def get_seed_pairs() -> list:
-    """Return the 4 frozen seed pairs from disk (loaded once)."""
-    return _SEED_PAIRS
 
 
 def label_for_entity(entity_id: str) -> str | None:

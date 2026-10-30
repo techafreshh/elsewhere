@@ -87,5 +87,5 @@ def test_hero_persistence_and_banner() -> None:
     assert "/api/catalog" in bundle
     assert "localStorage" in bundle
     assert "elsewhere.taste" in bundle
-    assert "taste-banner" in bundle
-    assert "transplanting" in bundle
+    assert "header-taste-chip" in bundle
+    assert "Transplanting" in bundle

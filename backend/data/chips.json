@@ -1,82 +1,314 @@
 [
   {
     "category": "Music",
+    "label": "Asake",
     "entity_id": "A80A473D-103A-4B71-8BFB-461D537B35EA",
-    "label": "Asake"
+    "entity_name": "Asake",
+    "entity_ok": false,
+    "tag_ids": [
+      "urn:tag:genre:afrobeats",
+      "urn:tag:genre:african",
+      "urn:tag:genre:nigeria",
+      "urn:tag:audience:qloo:loyal"
+    ]
   },
   {
     "category": "Music",
+    "label": "Burna Boy",
     "entity_id": "4A322BDD-04A3-4369-8234-B38A7FB485D9",
-    "label": "Burna Boy"
+    "entity_name": "Burna Boy",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:rap",
+      "urn:tag:genre:hip_hop",
+      "urn:tag:genre:afrobeats",
+      "urn:tag:genre:nigeria"
+    ]
   },
   {
     "category": "Music",
-    "entity_id": "C510E01A-E17C-45FC-8DCE-64A963A121A4",
-    "label": "Wizkid"
+    "label": "Bad Bunny",
+    "entity_id": "BDA1B73F-10E7-4D09-AC51-B796CCEC5FF3",
+    "entity_name": "Bad Bunny",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:latin",
+      "urn:tag:genre:reggaeton",
+      "urn:tag:genre:trap_latino",
+      "urn:tag:genre:puerto_rico"
+    ]
   },
   {
     "category": "Music",
-    "entity_id": "A78C19AA-DF8B-4D1C-9120-0F39041BA590",
-    "label": "Tems"
+    "label": "BLACKPINK",
+    "entity_id": "AFB6CA3D-9620-4D8B-9958-6727BA40AFA6",
+    "entity_name": "BLACKPINK",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:k_pop",
+      "urn:tag:genre:girl_group",
+      "urn:tag:genre:kpop",
+      "urn:tag:genre:korean"
+    ]
+  },
+  {
+    "category": "Music",
+    "label": "Miles Davis",
+    "entity_id": "578CFC26-B696-449A-9655-3FB270DDA725",
+    "entity_name": "Miles Davis",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:bebop",
+      "urn:tag:genre:trumpet",
+      "urn:tag:genre:blues",
+      "urn:tag:genre:fusion"
+    ]
+  },
+  {
+    "category": "Music",
+    "label": "Arijit Singh",
+    "entity_id": "924C8504-4BD8-4615-AB2D-1C16880A8A62",
+    "entity_name": "Arijit Singh",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:indipop",
+      "urn:tag:genre:all",
+      "urn:tag:genre:hindi",
+      "urn:tag:audience:qloo:devoted"
+    ]
   },
   {
     "category": "Food",
-    "entity_id": "720A3BDF-18FA-450F-997F-34B79EE1BE77",
-    "label": "Owambe jollof"
+    "label": "2am shawarma",
+    "entity_id": "31F75A7E-CFEF-4841-8171-FE806A84A243",
+    "entity_name": "Shawarma",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:place:restaurant:lebanese",
+      "urn:tag:ambience:qloo:lively",
+      "urn:tag:category:place:mediterranean_restaurant",
+      "urn:tag:genre:place:restaurant:mediterranean"
+    ]
   },
   {
     "category": "Food",
-    "entity_id": "8F8A810B-FDE6-4481-B344-D4F9D9623A8E",
-    "label": "2am shawarma"
+    "label": "Jollof rice",
+    "entity_id": "CF2E618D-610D-4959-8243-58CD4B93AB78",
+    "entity_name": "Jolloff Etcetera",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:cuisine:qloo:nigerian",
+      "urn:tag:genre:place:restaurant",
+      "urn:tag:genre:place",
+      "urn:tag:category:place:african_restaurant"
+    ]
   },
   {
     "category": "Food",
-    "entity_id": "B0FF0F27-62B1-4D0E-B86C-ECF0E0DF39B5",
-    "label": "Suya nights"
+    "label": "Late-night ramen",
+    "entity_id": "0E650077-B891-45DA-9C8B-9B006CBB7BA1",
+    "entity_name": "Ramen",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:ambience:qloo:unpretentious",
+      "urn:tag:ambience:qloo:clean",
+      "urn:tag:ambience:qloo:casual",
+      "urn:tag:cuisine:qloo:japanese"
+    ]
   },
   {
     "category": "Food",
-    "entity_id": "6E524581-0ED4-49EF-8935-0CE390A82F92",
-    "label": "Owambe parties"
+    "label": "Street tacos",
+    "entity_id": "06A473BA-0EC6-4C14-9909-581B8F42F904",
+    "entity_name": "Tacos",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:cuisine:qloo:tex_mex",
+      "urn:tag:cuisine:qloo:mexican",
+      "urn:tag:genre:place:restaurant:mexican",
+      "urn:tag:ambience:qloo:charming"
+    ]
+  },
+  {
+    "category": "Food",
+    "label": "Dim sum",
+    "entity_id": "066EEF18-8658-445E-A591-1D37A7B125E2",
+    "entity_name": "Dim Sum",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:ambience:qloo:sophisticated",
+      "urn:tag:cuisine:qloo:chinese",
+      "urn:tag:ambience:qloo:social",
+      "urn:tag:genre:place:restaurant"
+    ]
+  },
+  {
+    "category": "Food",
+    "label": "Slow brunch",
+    "entity_id": "0CCFADD2-D0A4-4E39-A2A5-D6D5BCD87CAF",
+    "entity_name": "Brunch",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:ambience:qloo:casual",
+      "urn:tag:ambience:qloo:comfortable",
+      "urn:tag:category:place:brunch_restaurant",
+      "urn:tag:genre:place:restaurant:breakfast"
+    ]
   },
   {
     "category": "Screens",
-    "entity_id": "7240FF40-BB23-4CD6-B8F5-131C21DAAAA2",
-    "label": "Nollywood slow-burns"
+    "label": "Nollywood drama",
+    "entity_id": "348A2B47-D933-42B4-935F-EE6C5626FAF3",
+    "entity_name": "Nollywood Restaurant",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:place",
+      "urn:tag:ambience:qloo:unpretentious",
+      "urn:tag:cuisine:qloo:west_african",
+      "urn:tag:ambience:qloo:homey"
+    ]
   },
   {
     "category": "Screens",
-    "entity_id": "5DC6251A-9EC6-4D3A-8562-E0F8A5596CA2",
-    "label": "Filmhouse IMAX"
+    "label": "Bollywood musicals",
+    "entity_id": "67B3C0D5-363A-45D3-A860-A3615B238135",
+    "entity_name": "Bollywood",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:ambience:qloo:clean",
+      "urn:tag:genre:place:restaurant:indian",
+      "urn:tag:ambience:qloo:friendly",
+      "urn:tag:cuisine:qloo:seafood"
+    ]
   },
   {
     "category": "Screens",
-    "entity_id": "EB79F0FD-E747-47A3-8E82-494729DA7C91",
-    "label": "Afrobeats videos"
+    "label": "Anime marathons",
+    "entity_id": "FEA96DFD-EE4E-4B0F-81B1-8B88FDBD3376",
+    "entity_name": "AniMe",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:person:musician",
+      "urn:tag:category:wikidata:person",
+      "urn:tag:wikipedia_category:wikidata:italian_women_in_electronic_music",
+      "urn:tag:wikipedia_category:wikidata:italian_electronic_dance_music_djs"
+    ]
   },
   {
     "category": "Screens",
-    "entity_id": "7FCAE187-B060-46FB-8A92-6C4199CE2C51",
-    "label": "Late-night cinema"
+    "label": "K-drama nights",
+    "entity_id": "1FC8268F-0174-40C9-9441-2D19EBB14CAC",
+    "entity_name": "K-Drama",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:rap",
+      "urn:tag:genre:hip_hop",
+      "urn:tag:genre:holy_hip_hop",
+      "urn:tag:genre:christian_rap"
+    ]
+  },
+  {
+    "category": "Screens",
+    "label": "Music documentaries",
+    "entity_id": "43E29A3A-91A8-4091-A46E-B74E50A0C20B",
+    "entity_name": "Country Music Hall of Fame and Museum",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:ambience:qloo:stylish",
+      "urn:tag:genre:place:tourist_attraction",
+      "urn:tag:ambience:qloo:immersive",
+      "urn:tag:ambience:qloo:lively"
+    ]
+  },
+  {
+    "category": "Screens",
+    "label": "Late-night cinema",
+    "entity_id": "5E30435A-DE6B-4054-91BB-97C5C827AA8A",
+    "entity_name": "Cinema",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:category:place:movie_theater",
+      "urn:tag:genre:place",
+      "urn:tag:genre:place:movie_theater",
+      "urn:tag:offerings:place:arcade_games"
+    ]
   },
   {
     "category": "Vibes",
-    "entity_id": "1BEF27FB-A71F-4368-AC38-E5B49868B39C",
-    "label": "Rooftop sunsets"
+    "label": "Rooftop sunsets",
+    "entity_id": "FBCC01ED-BF06-42DC-AA8E-A1084DD63EAE",
+    "entity_name": "Rooftop Bar",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:place",
+      "urn:tag:ambience:qloo:chilled",
+      "urn:tag:ambience:qloo:vibrant",
+      "urn:tag:ambience:qloo:grungy"
+    ]
   },
   {
     "category": "Vibes",
-    "entity_id": "26F0478A-3A0B-48B0-B809-74F18C55CAC7",
-    "label": "Street markets"
+    "label": "Jazz clubs",
+    "entity_id": "7FD742C4-D31A-4CEA-B802-7ADB568C749B",
+    "entity_name": "Jazz club",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:cuisine:qloo:french",
+      "urn:tag:ambience:qloo:lively",
+      "urn:tag:ambience:qloo:welcoming",
+      "urn:tag:category:place:bar"
+    ]
   },
   {
     "category": "Vibes",
-    "entity_id": "11538FAE-116D-47BD-9915-5BB1785FFF4E",
-    "label": "Late-night crowds"
+    "label": "Street markets",
+    "entity_id": "C72E64BA-A82B-400F-B798-BB2BB5EA540C",
+    "entity_name": "Street Market La Tejita",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:place:shopping",
+      "urn:tag:genre:place",
+      "urn:tag:genre:place:shopping_mall",
+      "urn:tag:category:place:shopping_mall"
+    ]
   },
   {
     "category": "Vibes",
-    "entity_id": "1B2DE081-8B04-410A-A75D-FC5FD147CDD4",
-    "label": "Quiet rooftops"
+    "label": "Karaoke nights",
+    "entity_id": "A222752B-88B1-4FD2-918B-A43D3D7C45D4",
+    "entity_name": "Karaoke Royal Ktv 97 Cầu Giấy",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:place",
+      "urn:tag:ambience:qloo:modern",
+      "urn:tag:ambience:qloo:stylish",
+      "urn:tag:ambience:qloo:lively"
+    ]
+  },
+  {
+    "category": "Vibes",
+    "label": "Quiet bookshops",
+    "entity_id": "57379550-AD3B-4DAA-A021-92EBBC2AF7EE",
+    "entity_name": "Bookshop Santa Cruz",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:ambience:qloo:community_focused",
+      "urn:tag:category:place:used_book_store",
+      "urn:tag:ambience:qloo:cozy",
+      "urn:tag:ambience:qloo:welcoming"
+    ]
+  },
+  {
+    "category": "Vibes",
+    "label": "Techno nights",
+    "entity_id": "3B493704-FE09-439F-BEAF-B2C15C9DABFA",
+    "entity_name": "2RaumClub dein Techno Club",
+    "entity_ok": true,
+    "tag_ids": [
+      "urn:tag:genre:place:disco_club",
+      "urn:tag:genre:place:restaurant",
+      "urn:tag:category:place:bar",
+      "urn:tag:cuisine:qloo:electronic_music"
+    ]
   }
 ]

@@ -1,5 +1,5 @@
 "use client";
-// beui.dev/components/agents/approval-card
+// beui.dev/components/agents/chat-app
 
 import {
   ArrowLeft,

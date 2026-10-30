@@ -46,9 +46,13 @@ def _isolated(monkeypatch, tmp_path):
 
 
 def _hero_london_seeds() -> list[str]:
-    pairs = json.loads((REPO_ROOT / "backend" / "data" / "seed_pairs.json").read_text())
-    hero = next(p for p in pairs if p.get("dest_city") == "London")
-    return list(hero["seed_ids"])
+    """Synthetic chip seeds — mock mode ignores IDs, so any valid shape works."""
+    return [
+        "urn:entity:artist:test-asake",
+        "urn:entity:place:test-filmhouse",
+        "urn:entity:place:test-owambe",
+        "urn:entity:place:test-shawarma",
+    ]
 
 
 def test_hero_london_reveal_shape(monkeypatch, tmp_path) -> None:
@@ -130,7 +134,7 @@ def test_reveal_fetch_paths_in_served_bundle() -> None:
 def test_agent_activity_and_stream_reader_in_served_bundle() -> None:
     """Streaming reveal plus activity feed survive minification into dist."""
     bundle = _served_bundle_text()
-    for anchor in ("agent-activity", "agent-activity-row", "streamAgui"):
+    for anchor in ("agent-activity", "agent-activity-row", "TOOL_CALL_START", "RUN_FINISHED"):
         assert anchor in bundle, anchor
 
 

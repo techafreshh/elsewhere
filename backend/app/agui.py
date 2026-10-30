@@ -10,14 +10,54 @@ from __future__ import annotations
 
 import json
 import os
+import queue
+import re
+import threading
+import time
 import urllib.parse
 import uuid
 from statistics import median
 
 try:
     from backend.app import agent as _agent
+    from backend.app import summarizer as _summarizer
 except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
     from app import agent as _agent
+    from app import summarizer as _summarizer
+
+# Message id of the live generic-LLM lane so the frontend can route its
+# TEXT_MESSAGE_* deltas into the tourist pane.
+TOURIST_MESSAGE_ID = "tourist"
+
+# How long the pipeline waits for the generic lane to finish before the
+# final snapshot. The Qloo steps (insights + brands + summarize) already
+# take 10s+, so a healthy tourist stream is done long before this; while
+# waiting, the queue is drained continuously so late first tokens still
+# stream instead of dying in the bounded join.
+_TOURIST_JOIN_TIMEOUT = 20.0
+
+
+def _tourist_lane_messages(city_display: str, words_display: str) -> list[dict]:
+    """The generic-LLM question: same city, same tastes, zero Qloo data —
+    deliberately the answer anyone gets from a plain chat model."""
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You write the Tourist pane of a moving-abroad comparison: "
+                "what a generic LLM with no local data says. Give the usual "
+                "obvious answer; do not invent specific hidden gems."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Someone is moving to {city_display}. At home they love: "
+                f"{words_display}. Give the generic answer: 5 well-known "
+                "touristy spots there, one short line each."
+            ),
+        },
+    ]
 
 
 def new_run_ids() -> tuple[str, str]:
@@ -186,11 +226,20 @@ def _new_tool_id() -> str:
     return "call_" + uuid.uuid4().hex[:12]
 
 
+def default_tourist_items(city_display: str) -> list[str]:
+    """Generic tourist rows when the live lane produced prose, not lines."""
+    return [
+        f"Top 10 restaurants in {city_display}",
+        f"Must-see sights in {city_display}",
+        f"Best nightlife in {city_display}",
+    ]
+
+
 def iter_transplant_events(seed_ids, city, refinements=None):
     """Stream the transplant loop as AG-UI events. Never raises.
 
     Wraps the real ``agent.py`` callables step by step: free-text seeds
-    resolve via ``_search_fn`` (``qloo_search``), places via
+    resolve via an extract_tastes call plus per-candidate ``qloo_search``, places via
     ``_fallback_entities`` (``qloo_insights_place``), brands via
     ``_brand_names`` (``qloo_insights_brand``), copy via ``_summarize_fn``
     (``summarize_panes``). Any exception after ``RUN_STARTED`` streams as
@@ -204,7 +253,10 @@ def iter_transplant_events(seed_ids, city, refinements=None):
     try:
         yield sse_encode(run_started(thread_id, run_id))
 
-        # Resolve seeds, emitting qloo_search only for free-text seeds.
+        # Resolve seeds, emitting visible tool calls for free-text seeds.
+        # Mirrors agent.resolve_text_seed step for step: an LLM extraction
+        # call, then one qloo_search per extracted candidate — every network
+        # hop the JSON path makes is protocol-visible here too.
         signals: list[str] = []
         confirmations: list[dict] = []
         labels: list[str] = []
@@ -219,42 +271,110 @@ def iter_transplant_events(seed_ids, city, refinements=None):
                     labels.append(label)
                 continue
             labels.append(text)
-            call_id = _new_tool_id()
-            yield sse_encode(tool_start(call_id, "qloo_search", thread_id, run_id))
-            yield sse_encode(tool_args(call_id, {"query": text}, thread_id, run_id))
+            extract_id = _new_tool_id()
+            yield sse_encode(tool_start(extract_id, "extract_tastes", thread_id, run_id))
+            yield sse_encode(tool_args(extract_id, {"text": text}, thread_id, run_id))
             try:
-                results = _agent._search_fn()(text)
+                candidate_queries = _agent.extract_taste_candidates(text) or []
             except Exception:
-                results = []
-            yield sse_encode(tool_end(call_id, thread_id, run_id))
-            yield sse_encode(tool_result(call_id, results if isinstance(results, (list, dict)) else [], thread_id, run_id))
-            if isinstance(results, list):
-                items = results
-            elif isinstance(results, dict) and isinstance(results.get("results"), list):
-                items = results["results"]
-            else:
-                items = []
-            candidates: list[dict] = []
-            for item in items[:3]:
-                if not isinstance(item, dict):
+                candidate_queries = []
+            if not candidate_queries:
+                candidate_queries = [text]
+            yield sse_encode(tool_end(extract_id, thread_id, run_id))
+            yield sse_encode(
+                tool_result(extract_id, {"candidates": candidate_queries}, thread_id, run_id)
+            )
+            merged: list[dict] = []
+            seen_ids: set[str] = set()
+            for query in candidate_queries[:3]:
+                if not isinstance(query, str) or not query.strip():
                     continue
-                name = item.get("name")
-                entity_id = item.get("entity_id") or item.get("id")
-                if not name or not entity_id:
-                    continue
-                if not _agent.is_entity_id(entity_id):
-                    continue
-                raw_conf = item.get("confidence", item.get("match_confidence", 0.9))
+                search_id = _new_tool_id()
+                yield sse_encode(tool_start(search_id, "qloo_search", thread_id, run_id))
+                yield sse_encode(tool_args(search_id, {"query": query.strip()}, thread_id, run_id))
                 try:
-                    confidence = float(raw_conf)
-                except (TypeError, ValueError):
-                    confidence = 0.9
-                candidates.append(
-                    {"name": str(name), "entity_id": str(entity_id), "confidence": confidence}
+                    hits = _agent._search_one_candidate(query)
+                except Exception:
+                    hits = []
+                yield sse_encode(tool_end(search_id, thread_id, run_id))
+                yield sse_encode(tool_result(search_id, hits, thread_id, run_id))
+                for hit in hits:
+                    try:
+                        entity_id = str(hit.get("entity_id", ""))
+                    except Exception:
+                        continue
+                    if not entity_id or entity_id in seen_ids:
+                        continue
+                    seen_ids.add(entity_id)
+                    merged.append(hit)
+            confirmations.append({"text": text, "candidates": merged})
+            if merged:
+                try:
+                    signals.append(str(merged[0]["entity_id"]))
+                except Exception:
+                    pass
+        # Surface free-text confirmations while the heavy calls run.
+        yield sse_encode(state_delta({"confirmations": confirmations}, thread_id, run_id))
+
+        # Generic-LLM lane: stream the plain (zero-Qloo) answer alongside the
+        # grounded pipeline. A daemon thread reads OpenRouter's SSE into a
+        # queue; the drains below interleave its deltas as TEXT_MESSAGE_*
+        # frames carrying the fixed `tourist` message id. Mock mode (no key)
+        # never starts the lane and the tourist pane keeps the template.
+        tourist_queue: queue.Queue = queue.Queue()
+        tourist_state = {"started": False, "text": ""}
+        words_display = (
+            ", ".join(
+                label
+                for label in (labels or [])
+                if isinstance(label, str) and label.strip()
+            ).strip(", ")
+            or "unspecified tastes"
+        )
+        tourist_thread: threading.Thread | None = None
+        if os.environ.get("OPENROUTER_API_KEY"):
+
+            def _tourist_worker() -> None:
+                def on_delta(piece: str) -> None:
+                    tourist_queue.put(piece)
+
+                try:
+                    _summarizer.stream_chat_deltas(
+                        _tourist_lane_messages(city_display, words_display), on_delta
+                    )
+                except Exception:
+                    pass
+                finally:
+                    tourist_queue.put(None)  # end-of-lane sentinel
+
+            try:
+                tourist_thread = threading.Thread(
+                    target=_tourist_worker, name="tourist-lane", daemon=True
                 )
-            confirmations.append({"text": text, "candidates": candidates})
-            if candidates:
-                signals.append(candidates[0]["entity_id"])
+                tourist_thread.start()
+            except Exception:
+                tourist_thread = None
+
+        def _tourist_frames():
+            """Drain queued generic-lane deltas as tourist TEXT_MESSAGE frames."""
+            while True:
+                try:
+                    piece = tourist_queue.get_nowait()
+                except queue.Empty:
+                    return
+                if piece is None:
+                    continue
+                # Models love markdown bold; the pane renders plain text.
+                # Cleaned HERE so the emitted deltas and the accumulated
+                # summary stay identical.
+                cleaned = piece.replace("**", "").replace("* ", "")
+                tourist_state["text"] += cleaned
+                if not tourist_state["started"]:
+                    tourist_state["started"] = True
+                    yield sse_encode(text_start(TOURIST_MESSAGE_ID, thread_id, run_id))
+                yield sse_encode(text_content(TOURIST_MESSAGE_ID, cleaned, thread_id, run_id))
+
+        yield from _tourist_frames()
 
         # Place insights around the real fallback ladder.
         place_call_id = _new_tool_id()
@@ -277,17 +397,15 @@ def iter_transplant_events(seed_ids, city, refinements=None):
 
         # Card/pin math identical to agent.run_transplant.
         picked = entities[:5]
-        scores: list[float] = []
-        for entity in picked:
-            try:
-                scores.append(float(entity.get("explainability", 1.0) or 1.0))
-            except (TypeError, ValueError):
-                scores.append(1.0)
+        scores = [
+            _agent._entity_score(entity, rank, len(picked))
+            for rank, entity in enumerate(picked)
+        ]
         try:
-            mid = float(median(scores)) or 1.0
+            mid = float(median(scores)) if scores else 1.0
         except (ValueError, TypeError):
             mid = 1.0
-        center = list(_agent._FALLBACK_CENTERS.get(city_display.strip().lower(), [51.5074, -0.1278]))
+        center = list(_agent.city_center(city_display) or [51.5074, -0.1278])
         seed_hint = next(
             (l for l in (labels or []) if isinstance(l, str) and l.strip()),
             city_display,
@@ -298,19 +416,37 @@ def iter_transplant_events(seed_ids, city, refinements=None):
             tags = entity.get("tags") if isinstance(entity.get("tags"), list) else []
             tag_hint = _agent._tag_label(tags[0]) if tags else (refs[0] if refs else "your crowd")
             tag_hint = tag_hint or (refs[0] if refs else "your crowd")
-            latlng = [round(center[0] + 0.01 * index, 4), round(center[1] + 0.012 * index, 4)]
+            latlng = _agent._entity_latlng(entity, index, center)
             cards.append(
                 {
                     "name": name,
-                    "address": str(entity.get("address", "")),
+                    "address": _agent._entity_address(entity),
                     "latlng": latlng,
                     "why_you": f"Because {seed_hint} nights and {tag_hint} both live here",
-                    "affinity_multiplier": round(scores[index] / mid, 1),
+                    "affinity_multiplier": _agent._affinity_multiplier(scores[index], mid),
                     "taste_path": [seed_hint, tag_hint, name],
                     "entity_id": str(entity.get("entity_id", "")),
                 }
             )
         map_pins = [{"latlng": card["latlng"], "card_index": i} for i, card in enumerate(cards)]
+        # Display center: mean over REAL entity locations only (Qloo geocodes
+        # typed cities server-side, so even a city outside the dictionary
+        # frames right); offset-derived or synthetic cards recenter exactly
+        # onto the generation center instead.
+        real_latlngs: list = []
+        for entity in picked:
+            location = entity.get("location") if isinstance(entity, dict) else None
+            if not isinstance(location, dict):
+                continue
+            try:
+                real_latlngs.append(
+                    [float(location["lat"]), float(location.get("lon", location.get("lng")))]
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        map_center = _agent.map_center_for(
+            city_display, real_latlngs
+        ) or list(center)
         try:
             _valid = _agent._valid_signals_for_insights(signals) if hasattr(_agent, "_valid_signals_for_insights") else (signals or None)
             _params = _agent.build_insights_params(city_display, _valid, take=8, refinements=refs)
@@ -352,7 +488,7 @@ def iter_transplant_events(seed_ids, city, refinements=None):
         }
         yield sse_encode(
             state_delta(
-                {"cards": cards, "pins": map_pins, "map_pins": map_pins, "map_center": center, "broadened": broadened, "qloo_query": qloo_query, "taste_path_sentence": taste_path_sentence, "model": model_slug, "why_qloo": why_qloo},
+                {"cards": cards, "pins": map_pins, "map_pins": map_pins, "map_center": map_center, "broadened": broadened, "qloo_query": qloo_query, "taste_path_sentence": taste_path_sentence, "model": model_slug, "why_qloo": why_qloo},
                 thread_id,
                 run_id,
             )
@@ -378,6 +514,7 @@ def iter_transplant_events(seed_ids, city, refinements=None):
         yield sse_encode(tool_end(brand_call_id, thread_id, run_id))
         yield sse_encode(tool_result(brand_call_id, {"brands": brands}, thread_id, run_id))
         yield sse_encode(state_delta({"brands": brands}, thread_id, run_id))
+        yield from _tourist_frames()
 
         # Summaries around the real summarizer.
         summarize_call_id = _new_tool_id()
@@ -394,13 +531,35 @@ def iter_transplant_events(seed_ids, city, refinements=None):
             f"Tourist take on {city_display}: the usual top-10 list, no reasons attached."
         )
         transplant_summary = f"Grounded transplant of {len(seeds)} tastes to {city_display}."
+        # The insights+brand hops gave the generic lane the whole pipeline to
+        # stream into; close it out (bounded) before the grounded panes land,
+        # draining continuously so slow-first-token streams still arrive.
+        if tourist_thread is not None and tourist_thread.is_alive():
+            deadline = time.monotonic() + _TOURIST_JOIN_TIMEOUT
+            while tourist_thread.is_alive() and time.monotonic() < deadline:
+                yield from _tourist_frames()
+                tourist_thread.join(timeout=0.5)
+        yield from _tourist_frames()
+        if tourist_state["started"]:
+            yield sse_encode(text_end(TOURIST_MESSAGE_ID, thread_id, run_id))
+        streamed_tourist = tourist_state["text"].strip()
+        tourist_items: list[str] = []
+        if streamed_tourist:
+            tourist_summary = streamed_tourist
+            for line in streamed_tourist.splitlines():
+                cleaned = re.sub(r"^\s*(?:[-\u2022*]|\d+[.)])\s*", "", line).strip()
+                if cleaned:
+                    tourist_items.append(cleaned[:200])
+            if len(tourist_items) < 2:
+                tourist_items = []  # a paragraph, not a list — keep template rows
+            tourist_items = tourist_items[:5]
         try:
-            panes = _agent._summarize_fn()(labels or [city_display], {"cards": picked})
+            panes = _agent._summarize_fn()(labels or [city_display], {"cards": picked, "city": city_display})
             if isinstance(panes, dict):
                 tourist = panes.get("tourist") if isinstance(panes.get("tourist"), dict) else {}
                 transplant = panes.get("transplant") if isinstance(panes.get("transplant"), dict) else {}
-                if isinstance(tourist.get("summary"), str) and tourist["summary"].strip():
-                    tourist_summary = tourist["summary"]
+            if isinstance(tourist.get("summary"), str) and tourist["summary"].strip() and not streamed_tourist:
+                tourist_summary = tourist["summary"]
                 if isinstance(transplant.get("summary"), str) and transplant["summary"].strip():
                     transplant_summary = transplant["summary"]
                 overrides = transplant.get("cards") if isinstance(transplant, dict) else []
@@ -442,9 +601,10 @@ def iter_transplant_events(seed_ids, city, refinements=None):
             state_delta(
                 {
                     "cards": cards,
-                    "tourist": {"summary": tourist_summary},
+                    "tourist": {"summary": tourist_summary, "items": tourist_items or default_tourist_items(city_display)},
                     "transplant": {"summary": transplant_summary},
                     "tourist_summary": tourist_summary,
+                    "tourist_items": tourist_items,
                     "transplant_summary": transplant_summary,
                 },
                 thread_id,
@@ -460,11 +620,14 @@ def iter_transplant_events(seed_ids, city, refinements=None):
             state_snapshot(
                 {
                     "cards": cards,
+                    "confirmations": confirmations,
                     "pins": map_pins,
                     "map_pins": map_pins,
-                    "map_center": center,
+                    "map_center": map_center,
                     "brands": brands,
+                    "tourist": {"summary": tourist_summary, "items": tourist_items or default_tourist_items(city_display)},
                     "tourist_summary": tourist_summary,
+                    "tourist_items": tourist_items,
                     "transplant_summary": transplant_summary,
                     "city": city_display,
                     "broadened": broadened,

@@ -1,5 +1,5 @@
 "use client";
-// beui.dev/components/agents/agent-activity
+// beui.dev/components/agents/chat-app
 
 import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";

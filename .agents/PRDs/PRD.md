@@ -326,6 +326,140 @@ Errors stream as `RUN_ERROR`; the UI falls back to `POST /api/transplant`. The Q
 | **Deploy slips / VPS issues** | No public URL = disqualified | Repo ships Dockerfile+Caddyfile so any host works in minutes; fallback: workers.dev static + tiny proxy first, VPS second |
 | **AG-UI/CopilotKit integration friction** | Lost time in a 3-day window | Tier 1 hand-rolls ~10 SSE event types (protocol is simple JSON) — no SDK dependency; `@ag-ui/client` optional (not installed; hand-rolled `streamAgui` ships instead); CopilotKit is Tier 2 only (not adopted); non-streaming JSON endpoint stays as fallback |
 
+## 14a. As-built amendment — Oct 29, 2026 (redesign)
+
+Delivered after live-Qloo wiring exposed data-quality issues and a UI pivot. Supersedes the
+matching points in §4/§7.2/§12 where they conflict.
+
+**Product shape**
+- Two screens: a full-screen **onboarding** (prompt, taste chips, city picker) and a **beUI
+  agent-chat workspace** (single column — no sidebar). The transplant result renders
+  in-stream inside the assistant reply as a **literal side-by-side comparison**: "What a
+  generic LLM says" left, "Where your people gather" right (map, 5 cards, refinement
+  pills), stacking vertically under 52rem. A one-line agent status ("✔ Ran N tools")
+  expands to the tool trace; the "Why this beats a list — the Qloo evidence" disclosure
+  carries the taste path, raw query, and the honesty toggle naming the shared model.
+- **Chip catalog is a global mix** (Music: Asake/Burna Boy/Bad Bunny/BLACKPINK/Miles Davis/
+  Arijit Singh · Food: 2am shawarma/Jollof rice/late-night ramen/street tacos/dim sum/slow
+  brunch · Screens: Nollywood/Bollywood/anime/K-drama/music documentaries/late-night cinema ·
+  Vibes: rooftop bars/jazz clubs/street markets/karaoke/quiet bookshops/techno nights), each
+  insights-probed with steering tags.
+- **All seeded demo machinery removed** (quick-launch buttons, `GET /api/seed_pairs`,
+  `seed_pairs.json`, `seed_cache.py`, auto-run-on-load, hero-seed submit fallback). Judges
+  input their own tastes; the generic server-side cache (any repeated query) remains.
+
+**Theme**
+- Onyx monochrome: no accent hue; near-black surfaces / white ink (dark default), inverted
+  for light mode via beUI `theme-toggle` + `next-themes`. System sans, compact spacing.
+
+**Live-data fixes (root-caused against the hackathon API)**
+- `/search` returns entities the insights graph does not know (the Asake artist ID warns
+  `not_found`; the signal is silently dropped → generic popularity results). Chips now resolve
+  via `resolve_chips.py` v2: keep the stored entity if a probe validates it, else search
+  (operator override queries for vibes labels) and probe each candidate; every chip also
+  stores up to 4 steering `tag_ids` sent as `signal.interests.tags` so taste survives entity
+  loss.
+- `feature.explainability=true` returns **no per-entity scores** — only `popularity` and
+  affinity ordering. Affinity multipliers now derive from explainability (mock) → popularity
+  (live) → rank decay, ratio vs the result-set median, clamped 0.6–3.0. Badges vary again
+  (verified: 0.6×–2.4×).
+- Real result geometry: map pins use `entity.location` and cards use
+  `properties.address` (both were fabricated/empty before).
+- Brand kickers: mojibake repair (UTF-8-as-cp1252 round-trip), unfixable garbage dropped,
+  case-insensitive dedupe. `_live_get` retries once on 429/5xx so a blinking upstream no
+  longer degrades a whole transplant.
+- Entity IDs are lowercased on the wire; results were identical upper vs lower, but lowercase
+  is canonical.
+
+**Frontend contracts updated** — the frozen §7.2 selector list changed with the rebuild;
+`backend/tests/test_*` bundle anchors updated to the new DOM (chip pills, `#prompt-input`,
+`#transplant-submit`, `.transplant-card[data-*]`, `.affinity-badge`, `.taste-path`,
+`.why-toggle`, `.honesty-line`, `tourist-pane` collapsible, etc.). Stream reader anchors now
+assert the AG-UI event literals (`TOOL_CALL_START`, `RUN_FINISHED`) that survive minification.
+
+## 14b. As-built amendment — Oct 30, 2026 (open-ended tastes, honest live comparison, one-result chat)
+
+Delivered after judge-lens feedback. Supersedes §14a where they conflict.
+
+**Open-ended taste input (no more 24-chip ceiling)**
+- `GET /api/search_tastes?q=` — Qloo `/search` as-you-type (300 ms debounce, ≥2 chars) turns
+  any free text into real entity ids; geo-noise prefixes (municipalities) rank below real
+  tastes; mock mode only echoes fixture names that match, so nothing is fabricated offline.
+- `POST /api/related` — cross-domain "people into your picks also like" via Qloo artist+brand
+  fan-out **without** `filter.location.query` (untyped `filter.type=urn:entity` is a 400;
+  artist/brand legs verified live). Related entities arrive without `types`; the fan-out
+  domain labels them. Catalog chips fill when Qloo returns nothing. The suggestion row
+  refreshes on every selection change (600 ms debounce).
+- Selected labels travel in a `labelMap` (search/suggestion hits aren't in the static chip
+  catalog); it feeds tokens, submit metadata, and session restore.
+
+**Honest side-by-side: the generic pane is now a real streamed LLM answer**
+- A second OpenRouter lane (daemon thread + queue inside the sync SSE generator) streams the
+  plain no-Qloo answer into TEXT_MESSAGE_* frames under a fixed `tourist` message id; the
+  frontend routes deltas by id into the tourist pane (agui.ts forwards unknown events; App
+  accumulates `touristStream`). The lane starts after seed resolution, drains at every
+  pipeline checkpoint plus a bounded join (20 s) so slow first tokens still stream; streamed
+  lines ≥2 become the pane's item rows (markdown bold stripped at emission).
+- The one-shot `summarize_panes` tourist prompt is city-aware (evidence carries `city`) —
+  the pane answers "moving to {city}, love {tastes}" rather than guessing a persona. Timeout
+  default raised 15→30 s: pane copy is the demo headline.
+
+**One result, updated in place**
+- The transcript holds exactly ONE live exchange: every run (refinement pill, follow-up
+  message, confirmation skip) replaces the current result and folds the prior ask into a
+  small `.exchange-trail`. No stacked maps/cards.
+
+**Any city on earth**
+- `backend/data/cities.json` grew from 5 names to a 169-city world dictionary
+  (`{name, country, lat, lng, aliases}`; NYC→New York, New Delhi→Delhi, …).
+- `GET /api/geocode?name=` resolves typed cities (dictionary instantly, then Qloo `/search`
+  geography hits with coordinates; cached). Qloo insights geocode `filter.location.query`
+  server-side anyway, so any city string flows into the pipeline; the map center recomputes
+  as the mean of REAL entity locations (synthetic/offset cards recenter onto the dictionary
+  center exactly — London mock contract unchanged).
+- The combobox commits a typed city on submit even without Enter (submit passes the override;
+  a typed "Tokyo" can never silently run London).
+
+**Session state**
+- `elsewhere.session.v1` (localStorage) persists tokens, city, labelMap, and the last result.
+  Reload boots straight into the restored chat; onboarding shows "← Back to chat"; the header
+  chip still goes to onboarding prefilled — both directions of the previously dead-end flow.
+
+**Degradation hardening (found live, mobile 375 px, Tokyo)**
+- The frontend idle watchdog (25 s) killed SSE runs whenever the Qloo ladder went quiet >25 s
+  (rate-limited bursts), and the JSON fallback then re-ran everything into the same burst —
+  landing on synthetic cards. Watchdog raised to 40 s; `_fallback_entities` no longer re-fires
+  identical hero calls (the two no-op rungs are gone; only the drop-weakest-seed rung remains);
+  `_live_get` backoff 0.5→1.5 s.
+
+**Tests** — 118 green: new `test_search_tastes.py`, `test_related.py`, `test_geocode.py`
+(+/agent city-center helpers), `test_agui.py` tourist-lane contracts (STREAM frames with a
+faked `stream_chat_deltas`, no-lane-without-key, dictionary map center), `test_catalog`
+world-dictionary shape.
+
+---
+
+## 14c. As-built amendment — Oct 30, 2026 (sectioned wizard onboarding)
+
+- The single scrolling onboarding page became a **centered one-section-at-a-time wizard**:
+  Music → Food → Screens → Vibes → go (5 steps, clickable progress dots, Back/Continue nav),
+  vertically centered. Each of the four taste sections carries **its own custom-taste search
+  box** (`#taste-search` per step) plus the correlated-suggestions row **on every step** —
+  skeleton pills (and a caption spinner) animate while Qloo refills after each selection;
+  an empty selection is a valid "cold start" call that fills from the chip catalog, so the
+  row never renders blank. Steps carry labelled pill buttons (Music/Food/Screens/Vibes/Go,
+  active inverted) and bordered Back/Continue nav. The final step adds the full picks bar
+  (`#selected-tokens` persists across steps), the optional describe-home prompt, the city
+  field, and the submit. `/api/related` cap raised 6→10.
+- The suggestion fan-out covers **five Qloo domains** — artist, movie, tv_show, brand and
+  place (live probe: all answer location-less; `video_game` and the untyped form are 400s) —
+  run in parallel legs (ThreadPoolExecutor) and merged **round-robin**, so the cap cuts
+  tails, never whole categories: the visible pills always mix every domain. Some
+  `/search`-only chip ids (the Asake lesson) hard-400 the non-artist types with entity
+  signals; each failing leg transparently retries on chip **tag signals**, which the graph
+  accepts for anything.
+
+
 ## 15. Appendix
 
 **Key dependencies & links**
@@ -343,3 +477,23 @@ Errors stream as `RUN_ERROR`; the UI falls back to `POST /api/transplant`. The Q
 - [ ] (No demo video required)
 
 **Submission rules snapshot:** new work (Qloo integration post-Sept 30, 2026 — satisfied: project is fully new); frozen after deadline (save draft early, submit before cutoff); judging = Stage 1 pass/fail (theme + genuine API use), Stage 2 four equal criteria (Technological Implementation, Design, Potential Impact, Quality of the Idea).
+
+## 14d. As-built amendment — Oct 30, 2026 (VoltChat chat rebuild)
+
+- The chat workspace was rebuilt in the image of the operator's VoltChat template
+  (github.com/TechaX1/voltchat) in its **deep-dark monochrome** theme: grayscale tokens
+  (bg 13%, card 15%, border 25%, inverted-contrast primary), Inter + JetBrains Mono, and the
+  volt motion kit — glowing logo tile, message snap-up, pulsing status dots, bouncing
+  loading dots, blinking streaming caret, slim custom scrollbars, reduced-motion guards.
+- Layout: fixed h-14 header (sidebar toggle, glowing plane tile, wordmark + mono city/tastes
+  caption, tastes chip, theme toggle); a collapsible overlay **session rail** ("New
+  transplant" → wizard, live picks with removable tokens, city, "Start over" clearing the
+  session, "live · qloo grounded" status); a centered max-w-3xl transcript (user asks in
+  right-aligned rounded-3xl primary pills with the replaced-asks trail, assistant replies
+  full-width with tool rows, streamed summary + caret, the result card, and a copy/thumbs
+  action bar); the composer is the volt glass card (rounded-26px, backdrop blur, glow on
+  focus, round send/stop) with a mono "↵ to send · Shift+↵ for newline" hint row. beUI
+  Message/MessageScroller/StreamingResponse were dropped from the chat for this bespoke
+  chrome; every functional element (map, comparison, pills, why-strip, session restore) is
+  unchanged, and all bundle-contract test anchors survive (119 tests green). The onboarding
+  wizard wears the same palette with a glowing logo tile and mono caption.
