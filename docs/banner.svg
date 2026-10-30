@@ -4,6 +4,8 @@
   <!-- soft volt glow behind the tile (layered, no filters) -->
   <ellipse cx="84" cy="95" rx="86" ry="52" fill="#ffffff" opacity="0.045"/>
   <ellipse cx="84" cy="95" rx="58" ry="36" fill="#ffffff" opacity="0.055"/>
+  <!-- live url -->
+  <text x="724" y="42" text-anchor="end" font-family="'JetBrains Mono', 'SFMono-Regular', Consolas, monospace" font-size="13" fill="#6b6b6b">elsewhere.techa.pro</text>
   <!-- logo tile -->
   <rect x="36" y="47" width="96" height="96" rx="24" fill="#212121" stroke="#525252" stroke-width="1.5"/>
   <g transform="translate(60,71) scale(2)" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -14,6 +16,4 @@
   <text x="162" y="96" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="42" font-weight="700" letter-spacing="9" fill="#ffffff">ELSEWHERE</text>
   <!-- tagline -->
   <text x="164" y="134" font-family="'JetBrains Mono', 'SFMono-Regular', Consolas, monospace" font-size="14" letter-spacing="0.5" fill="#9b9b9b">feel at home, elsewhere — grounded by the live taste graph</text>
-  <!-- live url -->
-  <text x="724" y="134" text-anchor="end" font-family="'JetBrains Mono', 'SFMono-Regular', Consolas, monospace" font-size="13" fill="#6b6b6b">elsewhere.techa.pro</text>
 </svg>
