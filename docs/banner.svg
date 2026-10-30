@@ -1,0 +1,19 @@
+<svg width="760" height="190" viewBox="0 0 760 190" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ELSEWHERE — feel at home, elsewhere">
+  <!-- banner -->
+  <rect x="0.75" y="0.75" width="758.5" height="188.5" rx="20" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="1.5"/>
+  <!-- soft volt glow behind the tile (layered, no filters) -->
+  <ellipse cx="84" cy="95" rx="86" ry="52" fill="#ffffff" opacity="0.045"/>
+  <ellipse cx="84" cy="95" rx="58" ry="36" fill="#ffffff" opacity="0.055"/>
+  <!-- logo tile -->
+  <rect x="36" y="47" width="96" height="96" rx="24" fill="#212121" stroke="#525252" stroke-width="1.5"/>
+  <g transform="translate(60,71) scale(2)" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 2 11 13"/>
+    <path d="M22 2 15 22 11 13 2 9z"/>
+  </g>
+  <!-- wordmark -->
+  <text x="162" y="96" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="42" font-weight="700" letter-spacing="9" fill="#ffffff">ELSEWHERE</text>
+  <!-- tagline -->
+  <text x="164" y="134" font-family="'JetBrains Mono', 'SFMono-Regular', Consolas, monospace" font-size="14" letter-spacing="0.5" fill="#9b9b9b">feel at home, elsewhere — grounded by the live taste graph</text>
+  <!-- live url -->
+  <text x="724" y="134" text-anchor="end" font-family="'JetBrains Mono', 'SFMono-Regular', Consolas, monospace" font-size="13" fill="#6b6b6b">elsewhere.techa.pro</text>
+</svg>
