@@ -109,6 +109,7 @@ Endpoints:
 | `POST` | `/agui` | Transplant agent stream (SSE, never cached) |
 | `POST` | `/api/transplant` | Transplant result as JSON (cache-first) |
 | `GET` | `/api/catalog` | Chip catalog + city dictionary from disk |
+| `GET` | `/api/seed_pairs` | Four frozen demo pairs (Lagos→London hero, Lagos→Toronto, NYC→Lagos, Nairobi→Lagos) from `backend/data/seed_pairs.json` |
 | `GET` | `/api/search_tastes?q=` | Free text → taste entities (`q` ≥ 2 chars) |
 | `POST` | `/api/related` | Correlated tastes for selected entity ids |
 | `GET` | `/api/geocode?name=` | Typed city → coordinates (`name` ≥ 2 chars) |
@@ -142,8 +143,8 @@ backend/app/      FastAPI service (single image, serves API + SPA on :8000)
   qloo.py         taste-graph client (live key or mock fixtures)
   summarizer.py   OpenRouter summaries (template fallback without key)
   cache.py        server-side transplant cache (seeds + city + refinements)
-  catalog.py      chips + cities served from backend/data/*.json
-  data/           chips.json (24 chips) + cities.json (169 cities)
+  catalog.py      chips + cities + seed pairs served from backend/data/*.json
+  data/           chips.json (24 chips) + cities.json (169 cities) + seed_pairs.json (4 pairs)
 frontend/src/     React 19 + Vite + Tailwind UI
   App.tsx         wizard + side-by-side chat workspace
   TransplantMap.tsx  Leaflet map (OSM tiles, per-pin markers)

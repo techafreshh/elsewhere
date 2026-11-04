@@ -1,0 +1,42 @@
+[
+  {
+    "from_home": "Lagos",
+    "dest_city": "London",
+    "seed_ids": [
+      "A80A473D-103A-4B71-8BFB-461D537B35EA",
+      "31F75A7E-CFEF-4841-8171-FE806A84A243",
+      "348A2B47-D933-42B4-935F-EE6C5626FAF3",
+      "FBCC01ED-BF06-42DC-AA8E-A1084DD63EAE"
+    ]
+  },
+  {
+    "from_home": "Lagos",
+    "dest_city": "Toronto",
+    "seed_ids": [
+      "4A322BDD-04A3-4369-8234-B38A7FB485D9",
+      "CF2E618D-610D-4959-8243-58CD4B93AB78",
+      "FEA96DFD-EE4E-4B0F-81B1-8B88FDBD3376",
+      "C72E64BA-A82B-400F-B798-BB2BB5EA540C"
+    ]
+  },
+  {
+    "from_home": "NYC",
+    "dest_city": "Lagos",
+    "seed_ids": [
+      "BDA1B73F-10E7-4D09-AC51-B796CCEC5FF3",
+      "06A473BA-0EC6-4C14-9909-581B8F42F904",
+      "5E30435A-DE6B-4054-91BB-97C5C827AA8A",
+      "3B493704-FE09-439F-BEAF-B2C15C9DABFA"
+    ]
+  },
+  {
+    "from_home": "Nairobi",
+    "dest_city": "Lagos",
+    "seed_ids": [
+      "578CFC26-B696-449A-9655-3FB270DDA725",
+      "066EEF18-8658-445E-A591-1D37A7B125E2",
+      "1FC8268F-0174-40C9-9441-2D19EBB14CAC",
+      "7FD742C4-D31A-4CEA-B802-7ADB568C749B"
+    ]
+  }
+]
