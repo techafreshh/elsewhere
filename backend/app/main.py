@@ -14,9 +14,9 @@ except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
     from app.cache import cache_get, cache_key, cache_put
 
 try:
-    from backend.app.catalog import get_catalog
+    from backend.app.catalog import get_catalog, get_seed_pairs
 except ModuleNotFoundError:  # served with backend/ on sys.path (app.main)
-    from app.catalog import get_catalog
+    from app.catalog import get_catalog, get_seed_pairs
 
 try:
     from backend.app.qloo import (
@@ -93,6 +93,12 @@ def health() -> dict:
 def catalog() -> dict:
     """Chip catalog grouped by category + city dictionary, from JSON on disk."""
     return get_catalog()
+
+
+@app.get("/api/seed_pairs")
+def seed_pairs() -> list:
+    """The 4 frozen demo seed pairs, from JSON on disk."""
+    return get_seed_pairs()
 
 
 def _entity_type_label(entity: object) -> str:
